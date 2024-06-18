@@ -1,0 +1,8 @@
+Firstly, Run below command in root address:
+
+crontab -e
+
+
+06 07 * * * sudo /usr/libexec/locate.updatedb && sudo /usr/libexec/locate.updatedb && sudo systemctl start updatedb.service
+
+

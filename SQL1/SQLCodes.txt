@@ -1,0 +1,93 @@
+-- Answers of task 2
+
+-- Customer definition
+
+CREATE TABLE [Customer]
+(
+    [CustomerId] INTEGER  NOT NULL,
+    [FirstName] NVARCHAR(40)  NOT NULL,
+    [LastName] NVARCHAR(20)  NOT NULL,
+    [Company] NVARCHAR(80),
+    [Address] NVARCHAR(70),
+    [City] NVARCHAR(40),
+    [State] NVARCHAR(40),
+    [Country] NVARCHAR(40),
+    [PostalCode] NVARCHAR(10),
+    [Phone] NVARCHAR(24),
+    [Fax] NVARCHAR(24),
+    [Email] NVARCHAR(60)  NOT NULL,
+    [SupportRepId] INTEGER,
+    CONSTRAINT [PK_Customer] PRIMARY KEY  ([CustomerId]),
+    FOREIGN KEY ([SupportRepId]) REFERENCES [Employee] ([EmployeeId]) 
+		ON DELETE NO ACTION ON UPDATE NO ACTION
+);
+
+CREATE UNIQUE INDEX [IPK_Customer] ON [Customer]([CustomerId]);
+CREATE INDEX [IFK_CustomerSupportRepId] ON [Customer] ([SupportRepId]);
+
+
+
+-- Employee definition
+
+CREATE TABLE [Employee]
+(
+    [EmployeeId] INTEGER  NOT NULL,
+    [LastName] NVARCHAR(20)  NOT NULL,
+    [FirstName] NVARCHAR(20)  NOT NULL,
+    [Title] NVARCHAR(30),
+    [ReportsTo] INTEGER,
+    [BirthDate] DATETIME,
+    [HireDate] DATETIME,
+    [Address] NVARCHAR(70),
+    [City] NVARCHAR(40),
+    [State] NVARCHAR(40),
+    [Country] NVARCHAR(40),
+    [PostalCode] NVARCHAR(10),
+    [Phone] NVARCHAR(24),
+    [Fax] NVARCHAR(24),
+    [Email] NVARCHAR(60),
+    CONSTRAINT [PK_Employee] PRIMARY KEY  ([EmployeeId]),
+    FOREIGN KEY ([ReportsTo]) REFERENCES [Employee] ([EmployeeId]) 
+		ON DELETE NO ACTION ON UPDATE NO ACTION
+);
+
+CREATE UNIQUE INDEX [IPK_Employee] ON [Employee]([EmployeeId]);
+CREATE INDEX [IFK_EmployeeReportsTo] ON [Employee] ([ReportsTo]);
+
+
+
+
+-- Answer of Task 4
+
+select Customer.CustomerName, CustomerType.CustomerTypeDisplayName, 
+count(Order.OrderId) as NumberOfOrders, Order.OrderDate as ErliestOrderDate
+from Customer
+join Order on Customer.CustomerId = Order.CustomerId
+join CustomerType on CustomerType.CustomerTypeId = Customer.CustomerTypeId
+group by Order.OrderId, Customer.CustomerId
+ORDER by Order.OrderDate ASC 
+
+
+
+
+
+-- Answer of Task 5-a:
+
+-- import the file
+BULK INSERT dbo.Restrictions
+FROM 'C:\FNZ\CSV_File.csv'
+WITH
+(
+        FORMAT='CSV',
+        FIRSTROW=2
+)
+
+
+select name, (select IsEnabled  from Restrictions where RestrictionType = "TypeA") as IsRestrictionTypeAEnabled,
+(select IsEnabled  from Restrictions where RestrictionType = "TypeB") as IsRestrictionTypeBEnabled,
+(select IsEnabled  from Restrictions where RestrictionType = "TypeC") as IsRestrictionTypeCEnabled
+from Restrictions
+group by Name
+
+
+

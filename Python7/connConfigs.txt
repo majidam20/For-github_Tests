@@ -1,0 +1,2 @@
+server,dbName,user,passw,port
+localhost,salesImpactTest,root,1333,3306

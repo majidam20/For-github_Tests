@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world-2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-world-2
+  template:
+    metadata:
+      labels:
+        app: hello-world-2
+    spec:
+      containers:
+        - name: my-hello-world-container
+          image: bash:devel-alpine3.15
+          command:
+            - /bin/sh
+            - -c
+            - while sleep 10; do echo "hello world 2" >> /hello_world_data/hello_world.txt; done
+          volumeMounts:
+          - name: persistent-volume
+            mountPath: /hello_world_data
+      volumes:
+      - name: persistent-volume
+        azureFile:
+          secretName: storage-account-secret
+          shareName: persistent-storage

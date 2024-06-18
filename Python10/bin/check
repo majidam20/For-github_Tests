@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# check parameters
+if [[ $# -ne 1 ]]; then
+    echo -e "Usage: ${0##*/} <task-name>"
+    exit 1
+fi
+
+# check script files
+TASK_NAME=$1
+SOURCE_DIR="/app/src"
+SCRIPT_FILE="${SOURCE_DIR}/solution/${TASK_NAME}.sql"
+if [[ ! -f $SCRIPT_FILE ]]; then
+    echo -e "File $SCRIPT_FILE not found"
+    exit 2
+fi
+
+HIGHLIGHT='\033[1;34m'
+NO_COLOR='\033[0m'
+
+# restore database
+echo -e "${HIGHLIGHT}Restoring database...${NO_COLOR}"
+reset-db
+
+# execute script
+echo -e "${HIGHLIGHT}Results:${NO_COLOR}"
+RESULT_FILE="${SOURCE_DIR}/output-obtained/${TASK_NAME}.csv"
+psql --csv < $SCRIPT_FILE > ${RESULT_FILE}
+daff ${RESULT_FILE}
+
+# check diff
+echo -e "${HIGHLIGHT}Diff:${NO_COLOR}"
+EXPECTED_FILE="${SOURCE_DIR}/output-expected/${TASK_NAME}.csv"
+if [[ ! -f $EXPECTED_FILE ]]; then
+    echo -e "File $EXPECTED_FILE not found"
+    echo -e "Remember that the solution script must be named after the task."
+    exit 3
+fi
+daff --fail-if-diff ${RESULT_FILE} ${EXPECTED_FILE}
+if [[ $? -eq 0 ]]; then
+    echo -e "${HIGHLIGHT}Bingo! All columns match.${NO_COLOR}"
+else
+    echo -e "${HIGHLIGHT}Something's fishy. Results don't match...${NO_COLOR}"
+    echo -e "You can check your results at: ${RESULT_FILE}"
+    echo -e "And the expected results at: ${EXPECTED_FILE}"
+fi
+
