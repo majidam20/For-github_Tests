@@ -1,0 +1,171 @@
+docker-compose --version
+
+docker images
+docker ps -a
+
+docker logs NAME in ps
+
+docker rmi -f  116f74da0eb1
+
+
+docker-compose down --remove-orphans
+
+###########
+
+docker build -t kfz_test:v1 .  ## v1 is optional
+$$$$$$$$$$$$$
+docker-compose build example-python
+docker-compose up -d
+docker-compose run example-python
+
+docker-compose run --no-TTY database mysql --host=localhost --user=root --password=1333
+
+docker run imgID
+docker ps -a
+docker commit CONTAINERID
+docker run -it NewGeneratedId bash
+python example.py
+§§§§§§§§§§§§
+
+docker pull nginx:latest
+docker pull hello-world
+docker cp ID/source ./Destination
+#############################
+ports:
+      - "8081:80"
+
+docker-compose build example-python
+docker-compose up -d  
+docker-compose run example-python
+python example.py
+
+
+docker ps -a
+docker commit CONTAINERID
+docker run -it new id bash
+RUN pip install pandas
+RUN pip install PyMySQL
+RUN python example.py
+
+
+mysql -h 127.0.0.1 -P 3306 -u root -p codetest
+
+apk update
+apk update python
+
+- MYSQL_RANDOM_ROOT_PASSWORD=yes
+docker-compose run example-python
+docker compose up database
+
+
+docker network list
+docker network inspect
+
+docker-compose down -v - Which stops and removes all the running services and volumes.
+docker system prune --volumes - Which completely removes volumes and cache.
+docker-compose up -d
+
+
+%%%%%%%%%%%%%%%%%%%%%%%
+docker compose run database mysql --host=localhost --user=root --password=1333
+codetest
+
+docker-compose build example-python
+docker run -e MYSQL_ROOT_PASSWORD=1333 2a04bf34fdf0 ,,, 3a532dfb93e4    example-python
+docker run sqlimage
+docker-compose up -d  
+docker-compose run example-python
+python example.py
+
+docker network ls
+docker network create example
+docker run -d --net example --name container1 <image>
+docker run -d --net example --name container2 <image>
+
+
+docker-compose run --no-TTY database mysql --host=database --user=codetest --
+password=NO codetest < places.sql
+
+
+mysql -h 127.0.0.1 -P 3306 -u root -p codetest
+
+++++++++++++++++
+docker build -t kfz_test:v1 .  ## v1 is optional
+
+++++++++++
+# Configuring access to Jupyter
+RUN mkdir /notebooks
+RUN jupyter notebook --no-browser --ip 0.0.0.0 --port 8888 /notebooks
++++++++++++++++
+
+docker-compose logs db
+
+++++++++++++++
+docker network ls
+ 
+docker run -dit --name alpine1 alpine ash
+
+docker run -dit --name alpine2 alpine ash
+
+docker network create --driver bridge alpine-net
+docker run -dit --name alpine1 --network alpine-net alpine ash
++++++++++++++++++++
+terraform plan -out tf.plan
+
+terraform show -no-color tf.plan > tfplan.txt
+
+export TF_LOG="TRACE" or "DEBUG"
+
+terraform plan -no-color 2>&1 | tee plan.log
+
++++++++++++++++++++++++++
+
+RUN mkdir /outputs
+
+COPY . /opt/app
+WORKDIR /opt/app
+RUN pip install -r requirements.txt
+
+### put python libraries in requirments.txt:
+
+pandas 
+psycopg2
+sqlalchemy
+
++++++++++++++++Ashkan, build and run both docker file and docker-compose.yaml file
+docker-compose up --build -d
++++++++++++++++++++++++++++
+docker rmi
+Option	Default	Description
+-f, --force		Force removal of the image
+--no-prune		Do not delete untagged parents
+
+Docker provides a single command that will clean up any resources — images, containers, volumes, and networks — that are dangling (not tagged or associated with a container):
+
+docker system prune
+
+To additionally remove any stopped containers and all unused images (not just dangling images), add the -a flag to the command:
+
+docker system prune -a
+++++++++++++++++
+Use the container ID to get ip of container:
+
+docker inspect <container ID>
+++++++++++++
+STEP 1:
+    ## Create Networks ##
+    docker network create bluenet
+    docker network create rednet`
+
+    STEP 2a: (automatically running)
+    ## Create (1) Container in background called "c1" running busybox image ##
+    docker run -itd --net bluenet --name c1 busybox sh
+
+    STEP 2b: (created only to run later)
+    ## Create (1) Container (notice no run flag - it is only created) ##
+    docker create -it --net bluenet --name c1 busybox sh
+
+    STEP 3:
+    ## Attach remaining Network ##
+    docker network connect rednet c1
+    docker start c1
