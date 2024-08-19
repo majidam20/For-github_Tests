@@ -1,0 +1,2 @@
+user,password,host,dbname
+root,1333,localhost,postgres
