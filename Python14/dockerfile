@@ -1,0 +1,36 @@
+FROM python:3.11.2
+FROM postgres:12
+
+RUN mkdir /app
+
+WORKDIR /app
+
+COPY dbConfigs.txt ./
+COPY cronRUN ./
+
+RUN pip install pandas
+RUN pip install numpy
+RUN pip install sqlalchemy
+RUN pip install pycoingecko
+
+
+RUN apt-get update && apt-get -y install cron
+
+# Copy cronRUN file to the cron.d directory
+COPY cronRUN /etc/cron.d/cronRUN
+ 
+# Give execution rights on the cron job
+RUN chmod 0644 /etc/cron.d/cronRUN
+
+# Apply cron job
+RUN crontab /etc/cron.d/cronRUN
+ 
+# Create the log file to be able to run tail
+RUN touch /var/log/cron.log
+ 
+# Run the command on container startup
+CMD ["cron", "-f"]
+
+
+
+

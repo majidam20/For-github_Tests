@@ -1,0 +1,1 @@
+0 9 * * *  /usr/bin/python main.py > outputs.log 2>&1

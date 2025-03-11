@@ -1,6 +1,9 @@
 https://sparkbyexamples.com/pyspark-tutorial/
 https://spark.apache.org/docs/latest/rdd-programming-guide.html
 
+###In chatgpt:
+important pyspark python codes
+
 from pyspark import SparkContext
 from pyspark import *
 from pyspark.sql import *
@@ -104,6 +107,11 @@ from pyspark.sql import functions as F
 window_spec = Window.partitionBy("department").orderBy(F.desc("salary"))
 # Calculate the rank of employees within each department based on salary
 employee_salary.withColumn("rank", F.rank().over(window_spec)).show()
+df = df.withColumn("gender",when(col("gender").equalTo("M"),lit("Male"))
+                           .when(col("gender").equalTo("F"),lit("Female"))
+                           .otherwise(lit("")))
+                           
+df = df.withColumnRenamed("gender","gender/sex")  
 
 +++++++++++++++++++++++++++++++++++++++++++++++++++++
 from pyspark.sql.types import StringType, ArrayType
@@ -126,3 +134,84 @@ flattened = parsed_df.select(col("parsed_json.artist_id"), col("parsed_json.name
 
 flattened_with_albums = flattened.select(col("artist_id"), col("name"), col("col.album_id"), col("col.name").alias("album_name") , col("col.year_released"))
 display(flattened_with_albums)
+
+++++++++++++++++++++++++++++++++
+from pyspark.sql.functions import col, to_date
+
+# Convert column types
+df_transformed = df_raw.withColumn("sale_amount", col("sale_amount").cast("double")) \
+                       .withColumn("sale_date", to_date(col("sale_date"), "yyyy-MM-dd"))
+
+++++++++++++++++++++++++++++++++++++++
+df.cache()  # Keep DataFrame in memory for faster access
+df.count()  # Trigger cache
+
+df.write.partitionBy("state").parquet("output/")
+df.write.bucketBy(4, "state").saveAsTable("bucketed_t )  
+++++++++++++++++++++++++++++++++++
+# Initialize Spark Session
+spark = SparkSession.builder.appName("MapReduceExample").getOrCreate()
+sc = spark.sparkContext  # Get the SparkContext
+
+# Sample text data
+data = ["hello world", "hello spark", "hello pyspark"]
+
+# Parallelize the data into an RDD
+rdd = sc.parallelize(data)
+
+# MapReduce Process
+word_counts = (rdd
+    .flatMap(lambda line: line.split(" "))   # Map: Split lines into words
+    .map(lambda word: (word, 1))             # Map: Assign count 1 to each word
+    .reduceByKey(lambda a, b: a + b)         # Reduce: Sum counts for each word
+)
+
+# Collect and print results
+print(word_counts.collect())
+++++++++++++++++++++++++++++++++++++++++++++++ 
+
+
+✅ Want to run MapReduce on a large dataset (Parquet, CSV, JSON)?
+✅ Need to orchestrate MapReduce jobs using Airflow, AWS Glue, or Databricks?
+✅ Want performance optimization techniques for PySpark MapReduce?  
+
+# Use SQL-style aggregation instead of RDD MapReduce
+result = df.groupBy("category").sum("sales")
+result.show()
+✅ Better performance than RDD MapReduce due to Catalyst Optimizer.                 
+
+rdd.mapPartitions(lambda partition: (expensive_function(x) for x in partition))
+🔹 Processes multiple records at once, reducing function call overhead.
+
+ Slow Approach (groupByKey())
+
+rdd = sc.parallelize([("apple", 1), ("banana", 1), ("apple", 1)])
+result = rdd.groupByKey().map(lambda x: (x[0], sum(x[1])))  # BAD: High shuffle cost
+print(result.collect())
+✅ Optimized Approach (reduceByKey())
+
+
+rdd = sc.parallelize([("apple", 1), ("banana", 1), ("apple", 1)])
+result = rdd.reduceByKey(lambda a, b: a + b)  # GOOD: Reduces before shuffle
+print(result.collect())
+🔹 reduceByKey() improves performance by reducing shuffle data.
+
+The persist() function in Apache Spark is used to store an RDD or DataFrame in memory (or disk) across multiple actions, preventing recomputations and improving performance.
+
+
+🔹 Feature	groupByKey()	reduceByKey()
+Function	Groups values by key	Aggregates values by key using a function
+Shuffle Cost	High (sends all values across nodes)	Optimized (reduces data before shuffle)
+Performance	Slow for large data (high memory usage)	Faster (less memory & optimized network traffic)
+Use Case	When you need all values per key	When you need aggregated results per key
+
+
+from pyspark.sql.functions import broadcast
+df1.join(broadcast(df2), "id")  # Faster join
+
+
+🔹 Use repartition(n) to increase partitions (expensive shuffle).
+🔹 Use coalesce(n) to decrease partitions (cheaper operation).
+
+df.write.partitionBy("category").parquet("output/")  # Efficient partitioning
+🔹 Speeds up queries by reducing unnecessary scans.
