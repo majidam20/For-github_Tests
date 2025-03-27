@@ -87,6 +87,9 @@ songdf.select("Genre").show()
 songdf.filter(songdf["Genre"]=="pop").show() 
 df.filter(df.quantity > 20)
 
+df = spark.read.csv("path/to/your/file.csv", header=True, inferSchema=True)
+daily_metrics_df.write.mode("overwrite").parquet(daily_metrics_output_path)
+
 student = sqlContext.read.parquet("...")  
 department = sqlContext.read.parquet("...")  
 student.filter(marks > 55).join(department, student.student_Id == department.id).groupBy(student.name, "gender")
@@ -110,6 +113,7 @@ from pyspark.sql import functions as F
 window_spec = Window.partitionBy("department").orderBy(F.desc("salary"))
 # Calculate the rank of employees within each department based on salary
 employee_salary.withColumn("rank", F.rank().over(window_spec)).show()
+
 df = df.withColumn("gender",when(col("gender").equalTo("M"),lit("Male"))
                            .when(col("gender").equalTo("F"),lit("Female"))
                            .otherwise(lit("")))
@@ -243,6 +247,8 @@ df.select("Department").distinct()
 df.select('sale_date').dropna().show()
 df.dropna(subset=["name"])
 df.fillna({"name": "Unknown"})
+col("prev_position").isNotNull()
+df_nulls = df.filter(col("prev_position").isNull())
 df.withColumnRenamed("age", "years_old")
 df_renamed = df.selectExpr("id", "name as full_name", "age as years_old")
 df.withColumnRenamed("old_column", "new_column")  # ❌ This does not modify df in place, so we muss reassign it
@@ -302,8 +308,10 @@ groupBy()
 join() (Except Broadcast Joins)
 repartition()
 distinct()
-orderBy() / sort()
+orderBy()
+sort()
 reduceByKey() (in RDDs)
+df.write.partitionBy("column_name").parquet("output_path")
 +++++++++++++++++++++++++++++++++++++++++++++++++++++
 Use broadcast() for Small Tables in Joins
 
@@ -315,3 +323,78 @@ df.coalesce(5)  # Merges partitions without full shuffle
 Cache Intermediate Results
 
 df.cache()  # Helps avoid recomputation and unnecessary shuffles
+++++++++++++++++++++++++++++++++++++++++++
+# Get SparkContext
+sc = spark.sparkContext
+
+# Create an RDD from a list
+data = [1, 2, 3, 4, 5]
+rdd = sc.parallelize(data, numSlices=2)
+
+# Check partitions
+print(f"Number of partitions: {rdd.getNumPartitions()}")
+
+# Collect results
+print(rdd.collect())  # Output: [1, 2, 3, 4, 5]
+✅ Spark distributes data into 2 partitions, allowing parallel processing.
++++++++++++++++++++++++++++++++++++++
+rdd = x.reduceByKey(lambda a, b: a + b)
+print(rdd.collect())
+
+[('spark', 1), ('hadoop', 4)]
++++++++++++++++++++++++++++++++++++++++++++++++
+from operator import add
+# Create an RDD with key-value pairs
+data = [("apple", 3), ("banana", 2), ("apple", 5), ("banana", 4), ("orange", 6)]
+rdd = sc.parallelize(data)
+
+# Apply reduceByKey() to sum the values for each fruit
+result_rdd = rdd.reduceByKey(add)
+
+# Collect and print results
+print(result_rdd.collect())
+🔹 Explanation
+sc.parallelize(data) → Creates an RDD with key-value pairs (fruits & their counts).
+
+reduceByKey(add) → Groups data by key (fruit) and adds the values.
+
+[('apple', 8), ('banana', 6), ('orange', 6)]
+✅ The function adds up values for each key:
+
+"apple": 3 + 5 = 8
+
+"banana": 2 + 4 = 6
+
+"orange": 6
+
+📌 When to Use reduceByKey() Instead of reduce()?
+Function	        Use Case
+reduce(func)	    Aggregates all values into a single result (e.g., sum of an entire list).
+reduceByKey(func)	Aggregates values per key in a key-value RDD (e.g., summing sales per product).
++++++++++++++++++++++++++++++++++++
+join(how=semileft)
+join(how=leftanti)### show unmatch data from left df
++++++++++++++++++++++++
+2. intersect() (Strict, Based on All Columns)
+Compares entire rows, not specific columns.
+
+Returns only common rows across both DataFrames.
+
+Automatically removes duplicates (like SQL INTERSECT).
+
+Does not allow column selection for comparison.
+
++++++++++++++++++++++++++++++++++++++++++++++++
+Difference Between map() and flatMap() in PySpark
+
+1. map()
+Applies a function to each element in the RDD.
+Each input produces exactly one output element.
+The output remains a list of lists if the function returns a list.
+
+
+2. flatMap()
+Applies a function that returns an iterable (list, set, etc.).
+Flattens the output, meaning multiple elements can be returned for each input.
+Removes one level of nesting.
++++++++++++++++++++++++++++++++++++++++++++++++
