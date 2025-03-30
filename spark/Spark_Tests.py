@@ -398,3 +398,14 @@ Applies a function that returns an iterable (list, set, etc.).
 Flattens the output, meaning multiple elements can be returned for each input.
 Removes one level of nesting.
 +++++++++++++++++++++++++++++++++++++++++++++++
+df.write.mode("overwrite").csv("path/to/output_directory", header=True)
+df.write.option("compression", "gzip").csv("path/to/output_directory")
+f.write.partitionBy("year", "month").csv("path/to/output_directory", header=True)
+df.coalesce(1).write.csv("path/to/output_directory", header=True)
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+In PySpark, DataFrames are immutable, meaning you cannot modify them in place like you can in Pandas. Instead, every transformation creates a new DataFrame.
+
+However, you can reassign the modified DataFrame to the same variable to simulate in-place modifications.
+++++++++++++++++++++++++++++++++++++++++++++++++
+df = spark.read.json("path/to/output.json")
+df.printSchema()
