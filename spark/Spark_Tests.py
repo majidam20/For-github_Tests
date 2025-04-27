@@ -403,9 +403,11 @@ df.write.option("compression", "gzip").csv("path/to/output_directory")
 f.write.partitionBy("year", "month").csv("path/to/output_directory", header=True)
 df.coalesce(1).write.csv("path/to/output_directory", header=True)
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-In PySpark, DataFrames are immutable, meaning you cannot modify them in place like you can in Pandas. Instead, every transformation creates a new DataFrame.
+In PySpark, DataFrames are immutable, meaning you cannot modify them "in place" like you can in Pandas. Instead, every transformation creates a new DataFrame.
 
 However, you can reassign the modified DataFrame to the same variable to simulate in-place modifications.
 ++++++++++++++++++++++++++++++++++++++++++++++++
 df = spark.read.json("path/to/output.json")
+df = spark.read.format("delta").load("s3://my-bucket/delta_table")
+df.write.format("delta").mode("overwrite").save("/delta/events")
 df.printSchema()
