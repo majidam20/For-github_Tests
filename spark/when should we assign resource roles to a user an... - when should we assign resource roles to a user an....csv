@@ -1,0 +1,5 @@
+Scenario,Assign to a User,Assign to a Managed Identity
+Who is acting?,A human being,An Azure service/application
+Interaction type?,"Interactive (portal, CLI, PowerShell)","Programmatic (code, background process)"
+Credential management?,User manages their own password/MFA,Azure manages credentials automatically
+Primary Goal,Enable human access and administration,"Enable secure service-to-service communication, eliminate credential management"

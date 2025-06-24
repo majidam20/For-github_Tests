@@ -1,0 +1,69 @@
+General Databricks Questions
+✅ Q1. What is Databricks, and how does it differ from traditional Spark?
+✅ Q2. What are the key components of Databricks architecture?
+✅ Q3. What are the advantages of using Databricks over a traditional Hadoop-based system?
+✅ Q4. What is the difference between Databricks Community Edition and the Enterprise Edition?
+✅ Q5. How does Databricks integrate with cloud platforms like AWS, Azure, and GCP?
+
+2️⃣ Apache Spark in Databricks
+✅ Q6. What is the role of Apache Spark in Databricks?
+✅ Q7. How does Databricks optimize Spark performance?***
+✅ Q8. What are Spark DataFrames, and how are they different from RDDs?
+✅ Q9. What is Delta Lake, and how does it improve data storage in Databricks?
+✅ Q10. What are the key benefits of Delta Lake over traditional parquet files?
+
+3️⃣ Databricks Delta Lake & Lakehouse Architecture
+✅ Q11. What are the key features of Delta Lake in Databricks?
+✅ Q12. What is the concept of ACID transactions in Delta Lake?
+✅ Q13. How does Delta Lake handle schema evolution?
+✅ Q14. What is Time Travel in Delta Lake, and how do you use it?
+✅ Q15. How does Databricks implement the Lakehouse architecture?
+
+4️⃣ Performance Optimization & Cluster Management
+✅ Q16. What is Databricks Photon, and how does it improve query performance?***
+✅ Q17. How do you optimize Databricks clusters for cost and performance?***
+✅ Q18. What is autoscaling in Databricks, and how does it work?
+✅ Q19. What are the different cluster types in Databricks (Standard, High Concurrency, etc.)?***
+✅ Q20. How can you monitor and debug performance issues in Databricks?
+
+5️⃣ Databricks SQL & Notebooks
+✅ Q21. What is Databricks SQL, and how does it differ from traditional SQL?***
+✅ Q22. How do you schedule and automate SQL queries in Databricks?
+✅ Q23. What are widgets in Databricks Notebooks, and how do they improve interactivity?
+✅ Q24. How can you integrate Databricks Notebooks with external tools like Power BI or Tableau?
+✅ Q25. How do you parameterize a Databricks Notebook?
+
+6️⃣ Databricks Workflows & Orchestration
+✅ Q26. What are Databricks Workflows, and how do they help with ETL orchestration?
+✅ Q27. How can you integrate Databricks with Apache Airflow?
+✅ Q28. What are Task Parameters in Databricks Workflows?
+✅ Q29. How do you handle failures in Databricks Jobs?
+✅ Q30. What are the advantages of using Databricks Workflows over external schedulers?
+
+7️⃣ Security & Access Control
+✅ Q31. How does Databricks implement Role-Based Access Control (RBAC)?
+✅ Q32. What is Unity Catalog, and how does it enhance data governance?
+✅ Q33. How do you manage user access to Databricks clusters and notebooks?
+✅ Q34. What is IP Allowlisting in Databricks?
+✅ Q35. How does Databricks ensure data encryption at rest and in transit?
+
+8️⃣ Databricks ML & AI (Advanced)
+✅ Q36. What is Databricks MLflow, and how is it used for machine learning?
+✅ Q37. How does Databricks support AutoML?
+✅ Q38. What are Feature Stores in Databricks, and why are they useful?
+✅ Q39. How do you deploy machine learning models in Databricks?
+✅ Q40. How does Databricks handle distributed training for deep learning?
+
+9️⃣ Real-World Scenario-Based Questions
+✅ Q41. You have a large dataset stored in Delta Lake. How would you improve query performance?
+✅ Q42. How would you migrate an existing on-prem Hadoop system to Databricks?
+✅ Q43. If a Databricks job is failing intermittently, how would you debug and resolve it?
+✅ Q44. How would you build an end-to-end ETL pipeline using Databricks?
+✅ Q45. A business team wants real-time data processing. How would you implement it in Databricks?
+
+📌 Bonus Tips for Cracking a Databricks Interview:
+🔹 Be hands-on with Databricks SQL, Workflows, and Delta Lake.
+🔹 Understand how Databricks clusters work and how to optimize them.
+🔹 Know how to integrate Databricks with other cloud services (AWS, Azure, GCP).
+🔹 Prepare real-world scenarios, as many interviews focus on problem-solving.
+🔹 Stay updated on new Databricks features (Photon, Unity Catalog, Serverless SQL, etc.).

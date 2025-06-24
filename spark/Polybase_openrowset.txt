@@ -1,0 +1,769 @@
+ 1. Using OPENROWSET (Recommended for Ad-Hoc or Direct Querying):
+This is the simplest way to read data from Parquet files without creating persistent external objects.
+
+SQL
+
+SELECT TOP 100 *
+FROM OPENROWSET(
+    BULK 'https://yourstorageaccount.blob.core.windows.net/yourcontainer/your_data.parquet',
+    FORMAT = 'PARQUET'
+) AS [result];
+To ingest into a table: You can use INSERT INTO ... SELECT * FROM OPENROWSET(...).
+SQL
+
+CREATE TABLE YourTable (
+    Column1 INT,
+    Column2 VARCHAR(255),
+    -- ... other columns
+);
+
+INSERT INTO YourTable
+SELECT
+    Column1,
+    Column2
+FROM OPENROWSET(
+    BULK 'https://yourstorageaccount.blob.core.windows.net/yourcontainer/your_data.parquet',
+    FORMAT = 'PARQUET'
+) AS [result];
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+INSERT INTO YourTargetTable (Column1, Column2)
+SELECT
+    Column1,
+    Column2
+FROM OPENROWSET(
+    BULK 'https://yourstorageaccount.blob.core.windows.net/yourcontainer/your_data.csv',
+    FORMAT = 'CSV',
+    PARSER_VERSION = '2.0', -- Recommended for CSV
+    HEADER_ROW = TRUE
+) AS [result];
++++++++++++++
+INSERT INTO YourOnPremSQLTable (Column1, Column2, ...)
+SELECT
+    Column1,
+    Column2,
+    ...
+FROM OPENROWSET(
+    BULK 'https://yourstorageaccount.blob.core.windows.net/yourcontainer/your_data.parquet',
+    FORMAT = 'PARQUET'
+    -- DATA_SOURCE = 'YourExternalDataSource' (if you set it up separately)
+) AS [result];
+ ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1. Create External Data Source
+CREATE MASTER KEY ENCRYPTION BY PASSWORD='YourStrongPassword'; -- One-time setup
+CREATE DATABASE SCOPED CREDENTIAL MyADLSCredential WITH IDENTITY = 'Managed Identity'; -- Or SAS Key, etc.
+
+CREATE EXTERNAL DATA SOURCE RawDataLake
+WITH (
+    LOCATION = 'abfss://rawdata@<your_storage_account_name>.dfs.core.windows.net',
+    CREDENTIAL = MyADLSCredential
+);
+
+-- 2. Create External File Format
+CREATE EXTERNAL FILE FORMAT ParquetFileFormat
+WITH (
+    FORMAT_TYPE = PARQUET,
+    DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec'
+);
+
+-- 3. Create External Table
+CREATE EXTERNAL TABLE ext_Customers (
+    CustomerID INT,
+    FirstName VARCHAR(50),
+    LastName VARCHAR(50),
+    City VARCHAR(50)
+)
+WITH (
+    LOCATION = 'customers/', -- Relative path within the data source
+    DATA_SOURCE = RawDataLake,
+    FILE_FORMAT = ParquetFileFormat
+);
+
+-- 4. Query the External Table (can be done from both Dedicated and Serverless SQL Pool)
+SELECT
+    CustomerID,
+    FirstName,
+    City
+FROM
+    ext_Customers
+WHERE
+    City = 'London';
+
++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Create an External Data Source
+
+CREATE EXTERNAL DATA SOURCE my_adls_source
+WITH (
+    TYPE = HADOOP,
+    LOCATION = 'abfss://my-container@myaccount.dfs.core.windows.net/',
+    CREDENTIAL = my_adls_credential
+);
+Replace:
+
+my-container with your ADLS container name
+
+myaccount with your ADLS account name
+
+🔹 4️⃣ Create an External File Format
+
+CREATE EXTERNAL FILE FORMAT my_csv_format
+WITH (
+    FORMAT_TYPE = DELIMITEDTEXT,
+    FORMAT_OPTIONS (
+        FIELD_TERMINATOR = ',',
+        STRING_DELIMITER = '"',
+        FIRST_ROW = 2  -- Skip header row
+    )
+);
+🔹 5️⃣ Create an External Table
+
+CREATE EXTERNAL TABLE my_external_table (
+    Column1 INT,
+    Column2 NVARCHAR(100),
+    Column3 FLOAT
+)
+WITH (
+    LOCATION = '/path/to/csv/folder/',
+    DATA_SOURCE = my_adls_source,
+    FILE_FORMAT = my_csv_format
+);
+Note:
+
+LOCATION is relative to your container root (e.g. /data/2024/)
+
+Data Lake folders (directories) can contain multiple files (partitioned or otherwise)
+
+🔹 Usage
+Now you can run:
+
+SELECT * FROM my_external_table;
+	
+++++++++++++++++++++++++++++++++++++++++++++++++++++
+-- Querying a Parquet file with automatic schema inference
+SELECT
+    TOP 100 *
+FROM
+    OPENROWSET(
+        BULK 'https://<your_storage_account_name>.dfs.core.windows.net/salesdata/2024/sales_q1.parquet',
+        FORMAT = 'PARQUET'
+    ) AS [result];
+
+-- Querying a CSV file with explicit schema
+SELECT
+    TOP 100
+    p.country_name,
+    p.population
+FROM
+    OPENROWSET(
+        BULK 'https://<your_storage_account_name>.blob.core.windows.net/public/population/*.csv',
+        FORMAT = 'CSV',
+        PARSER_VERSION = '2.0',
+        FIRSTROW = 2 -- Skip header row
+    )
+WITH (
+    country_code VARCHAR(5),
+    country_name VARCHAR(100),
+    year SMALLINT,
+    population BIGINT
+) AS p
+WHERE
+    p.year = 2023;
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+-- SQL Code to Ingest Parquet File from ADLS Gen2 to Azure Synapse Dedicated SQL Pool
+
+-- IMPORTANT: Replace the placeholder values in angle brackets <> with your actual details.
+
+-- Step 1: Create a Master Key and Database Scoped Credential (if needed)
+-- This step is primarily for accessing external data using Shared Access Signatures (SAS)
+-- or Service Principals. For Managed Identity (recommended for Synapse), this is often NOT needed,
+-- as the Synapse Workspace's Managed Identity can be granted direct access to ADLS Gen2.
+-- If you are using Managed Identity for your Synapse Workspace to access ADLS Gen2,
+-- you can often skip this entire section, provided the Managed Identity has 'Storage Blob Data Contributor' role.
+
+/*
+-- Uncomment and modify if you need to use SAS Token or Service Principal instead of Managed Identity
+
+-- Option A: Using Shared Access Signature (SAS) Token
+-- CREATE MASTER KEY ENCRYPTION BY PASSWORD='<YourStrongPassword>';
+-- CREATE DATABASE SCOPED CREDENTIAL [https://<YourADLSGen2AccountName>.dfs.core.windows.net/<YourContainerName>]
+-- WITH IDENTITY='SHARED ACCESS SIGNATURE',
+-- SECRET='<YourSASKey>'; -- The full SAS token string starting with '?'
+
+-- Option B: Using Service Principal (Application ID)
+-- CREATE MASTER KEY ENCRYPTION BY PASSWORD='<YourStrongPassword>';
+-- CREATE DATABASE SCOPED CREDENTIAL [<YourServicePrincipalName>]
+-- WITH IDENTITY='Managed Identity', -- Or 'Service Principal'
+-- SECRET='<YourServicePrincipalAppId>'; -- The Application (client) ID of your Service Principal
+*/
+
+
+-- Step 2: Create an External Data Source
+-- This links your Dedicated SQL Pool to the ADLS Gen2 location where your Parquet files are.
+-- Ensure the IDENTITY used here has permissions to access the ADLS Gen2 path.
+-- 'MANAGED IDENTITY' is recommended as it uses the Synapse Workspace's System-Assigned Managed Identity.
+
+IF NOT EXISTS (SELECT * FROM sys.external_data_sources WHERE name = 'ADLSGen2DataSource')
+BEGIN
+    CREATE EXTERNAL DATA SOURCE ADLSGen2DataSource
+    WITH (
+        LOCATION = 'abfss://<YourADLSGen2ContainerName>@<YourADLSGen2AccountName>.dfs.core.windows.net/',
+        -- Using Managed Identity (recommended for Synapse)
+        IDENTITY = 'Managed Identity'
+        -- Or if using a Database Scoped Credential created in Step 1:
+        -- CREDENTIAL = [<YourCredentialName>]
+    );
+END
+GO
+
+-- Step 3: Create an External File Format for Parquet
+-- This defines how the SQL Pool should interpret the Parquet files.
+
+IF NOT EXISTS (SELECT * FROM sys.external_file_formats WHERE name = 'ParquetFileFormat')
+BEGIN
+    CREATE EXTERNAL FILE FORMAT ParquetFileFormat
+    WITH (
+        FORMAT_TYPE = PARQUET,
+        DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec' -- Common compression for Parquet
+        -- For uncompressed Parquet, use DATA_COMPRESSION = ''
+    );
+END
+GO
+
+-- Step 4: Create the Target Table in Dedicated SQL Pool
+-- This is the internal table where your data will be loaded.
+-- The schema (column names and data types) must match your Parquet file's schema.
+-- Adjust column definitions (names, data types, nullability) as per your Parquet file.
+-- Example: Assuming your Parquet has columns like ProductID (int), ProductName (varchar), Price (decimal), etc.
+
+IF OBJECT_ID('dbo.YourTargetTableName') IS NOT NULL
+BEGIN
+    DROP TABLE dbo.YourTargetTableName; -- Drop table if it exists (for re-running example)
+END
+
+CREATE TABLE dbo.YourTargetTableName
+(
+    -- Example Columns - Adjust these to match your Parquet file's schema
+    ProductID   INT,
+    ProductName VARCHAR(255),
+    Category    VARCHAR(100),
+    Price       DECIMAL(10, 2),
+    SaleDate    DATE,
+    Quantity    INT
+)
+WITH
+(
+    DISTRIBUTION = ROUND_ROBIN, -- Or HASH(<YourDistributionColumn>) for performance, e.g., HASH(ProductID)
+    HEAP -- Or CLUSTERED COLUMNSTORE INDEX for large tables and analytical queries
+);
+GO
+
+-- Step 5: Ingest data using COPY INTO statement
+-- This command reads the Parquet file(s) from your ADLS Gen2 and loads them into the target table.
+-- You can specify a single file or a folder path (which will ingest all Parquet files in that folder).
+
+COPY INTO dbo.YourTargetTableName
+FROM '<PathToYourParquetFileOrFolderInContainer>' -- e.g., 'sales/2024/product_data.parquet' or 'sales/2024/'
+WITH (
+    FILE_TYPE = 'PARQUET',
+    -- If your Parquet files are within subfolders of the external data source's location,
+    -- this path should be relative to the external data source's LOCATION.
+    -- Example: If EXTERNAL DATA SOURCE LOCATION is 'abfss://container@account.dfs.core.windows.net/'
+    -- and your file is 'abfss://container@account.dfs.core.windows.net/sales/2024/product_data.parquet',
+    -- then FROM path is 'sales/2024/product_data.parquet'
+    
+    -- Specify the external data source and file format created previously
+    EXTERNAL_DATA_SOURCE = 'ADLSGen2DataSource',
+    EXTERNAL_FILE_FORMAT = 'ParquetFileFormat',
+
+    -- Optional: ERRORFILE for logging bad rows
+    -- ERRORFILE = 'https://<YourADLSGen2AccountName>.dfs.core.windows.net/<ErrorContainerName>/errors/',
+    -- ERRORFILE_CREDENTIAL = [<YourCredentialNameForErrorFile>] -- If different credential for error file path
+    
+    -- Optional: If you need to skip header, specify ROWTERMINATOR.
+    -- For Parquet, skipping header is usually not necessary as schema is embedded.
+    -- ROWTERMINATOR='0x0A' -- For CSV files
+    
+    -- Optional: MAXERRORS to allow a certain number of errors before failing
+    -- MAXERRORS = 0 -- Default is 0, means no errors allowed
+    
+    -- Optional: Specify the collation for string columns if needed
+    -- CODEPAGE = '65001' -- For UTF-8 encoding
+);
+GO
+
+-- Step 6: Verify the data (Optional)
+SELECT TOP 100 *
+FROM dbo.YourTargetTableName;
+GO
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+-- SQL Code to Ingest Parquet File from ADLS Gen2 to Azure Synapse Dedicated SQL Pool using an External Table
+
+-- IMPORTANT: Replace the placeholder values in angle brackets <> with your actual details.
+
+-- Step 1: Create a Master Key and Database Scoped Credential (if needed)
+-- This step is typically only required if you are using Shared Access Signatures (SAS) or
+-- Service Principals for ADLS Gen2 access.
+-- For the recommended approach of using the Synapse Workspace's System-Assigned Managed Identity,
+-- you can usually SKIP this step, provided the Managed Identity has 'Storage Blob Data Contributor'
+-- role on your ADLS Gen2 account.
+
+/*
+-- Uncomment and modify if you need to use SAS Token or Service Principal
+
+-- Option A: Using Shared Access Signature (SAS) Token
+CREATE MASTER KEY ENCRYPTION BY PASSWORD='<YourStrongPasswordHere>'; -- Replace with a strong password
+GO
+CREATE DATABASE SCOPED CREDENTIAL [https://<YourADLSGen2AccountName>.dfs.core.windows.net/<YourContainerName>]
+WITH IDENTITY='SHARED ACCESS SIGNATURE',
+SECRET='<YourSASKey>'; -- The full SAS token string, starting with '?'
+GO
+
+-- Option B: Using Service Principal (Application ID) - Less common for simple external table access
+-- CREATE MASTER KEY ENCRYPTION BY PASSWORD='<YourStrongPasswordHere>'; -- Replace with a strong password
+-- GO
+-- CREATE DATABASE SCOPED CREDENTIAL [<YourServicePrincipalName>] -- Give it a meaningful name
+-- WITH IDENTITY='Managed Identity', -- Or 'Service Principal' if using a registered app
+-- SECRET='<YourServicePrincipalAppId>'; -- The Application (client) ID of your Service Principal
+-- GO
+*/
+
+
+-- Step 2: Create an External Data Source
+-- This connects your Dedicated SQL Pool to the root of your ADLS Gen2 container.
+-- Ensure the IDENTITY specified here has 'Storage Blob Data Contributor' permissions on your ADLS Gen2.
+
+IF NOT EXISTS (SELECT * FROM sys.external_data_sources WHERE name = 'ADLSGen2DataSource')
+BEGIN
+    CREATE EXTERNAL DATA SOURCE ADLSGen2DataSource
+    WITH (
+        LOCATION = 'abfss://<YourADLSGen2ContainerName>@<YourADLSGen2AccountName>.dfs.core.windows.net/',
+        -- Using Managed Identity (recommended for Synapse)
+        IDENTITY = 'Managed Identity'
+        -- Or if using a Database Scoped Credential created in Step 1:
+        -- CREDENTIAL = [<YourCredentialName>]
+    );
+END
+GO
+
+-- Step 3: Create an External File Format for Parquet
+-- This tells the SQL Pool how to interpret the Parquet files.
+
+IF NOT EXISTS (SELECT * FROM sys.external_file_formats WHERE name = 'ParquetFileFormat')
+BEGIN
+    CREATE EXTERNAL FILE FORMAT ParquetFileFormat
+    WITH (
+        FORMAT_TYPE = PARQUET,
+        DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec' -- Common compression for Parquet
+        -- Use DATA_COMPRESSION = '' for uncompressed Parquet
+    );
+END
+GO
+
+-- Step 4: Create the External Table
+-- This table points to your Parquet file(s) in ADLS Gen2.
+-- The schema (column names and data types) MUST accurately match the Parquet file's schema.
+-- The 'LOCATION' here is relative to the EXTERNAL DATA SOURCE's LOCATION.
+
+IF OBJECT_ID('ext.ExternalParquetTable') IS NOT NULL
+BEGIN
+    DROP EXTERNAL TABLE ext.ExternalParquetTable;
+END
+
+CREATE SCHEMA IF NOT EXISTS ext; -- Create a schema for external tables if it doesn't exist
+GO
+
+CREATE EXTERNAL TABLE ext.ExternalParquetTable
+(
+    -- Define columns matching your Parquet file's schema
+    -- Example: Assuming your Parquet has columns like ProductID (int), ProductName (varchar), Price (decimal), etc.
+    ProductID   INT,
+    ProductName VARCHAR(255),
+    Category    VARCHAR(100),
+    Price       DECIMAL(10, 2),
+    SaleDate    DATE,
+    Quantity    INT
+)
+WITH (
+    LOCATION = '<PathToYourParquetFileOrFolderInContainer>', -- e.g., 'sales/2024/product_data.parquet' or 'sales/2024/'
+    -- This path is relative to the LOCATION defined in 'ADLSGen2DataSource'
+    DATA_SOURCE = 'ADLSGen2DataSource',
+    FILE_FORMAT = 'ParquetFileFormat'
+);
+GO
+
+-- Step 5: Verify the External Table (Optional)
+-- You can query the external table directly. This reads data from ADLS Gen2 on the fly.
+SELECT TOP 100 *
+FROM ext.ExternalParquetTable;
+GO
+
+-- Step 6: Ingest the data into an INTERNAL Dedicated SQL Pool table
+-- This is the actual "ingestion" step where data is physically moved into the SQL Pool's storage.
+
+-- Option A: Create a NEW internal table from the external table (Recommended for new tables)
+-- This is often the most efficient way to load and define a table's distribution/indexing.
+
+IF OBJECT_ID('dbo.YourInternalTargetTableName') IS NOT NULL
+BEGIN
+    DROP TABLE dbo.YourInternalTargetTableName; -- Drop table if it exists (for re-running example)
+END
+
+CREATE TABLE dbo.YourInternalTargetTableName
+WITH
+(
+    DISTRIBUTION = ROUND_ROBIN, -- Or HASH(<YourDistributionColumn>), e.g., HASH(ProductID)
+    CLUSTERED COLUMNSTORE INDEX -- Highly recommended for large fact tables in Dedicated SQL Pool
+    -- Or HEAP for small staging tables
+)
+AS
+SELECT
+    ProductID,
+    ProductName,
+    Category,
+    Price,
+    SaleDate,
+    Quantity
+FROM ext.ExternalParquetTable;
+GO
+
+-- Option B: Insert data into an EXISTING internal table from the external table
+-- Use this if you already have your target table defined.
+
+/*
+-- Uncomment and modify if you want to insert into an existing table
+INSERT INTO dbo.YourExistingInternalTableName
+(ProductID, ProductName, Category, Price, SaleDate, Quantity) -- List your target columns
+SELECT
+    ProductID,
+    ProductName,
+    Category,
+    Price,
+    SaleDate,
+    Quantity
+FROM ext.ExternalParquetTable;
+GO
+*/
+
+-- Step 7: Verify the Internal Table (Optional)
+SELECT TOP 100 *
+FROM dbo.YourInternalTargetTableName;
+GO
++++++++++++++++++++++++++++++++++++++++++++from query to dlake by serverless sql pool++++++++++++
+-- First, ensure you have an external data source configured for your ADLS Gen2
+-- and possibly a database-scoped credential for authentication if needed.
+CREATE EXTERNAL DATA SOURCE MyDataLake
+WITH (
+    LOCATION = 'https://yourdatalake.dfs.core.windows.net/yourcontainer',
+    CREDENTIAL = YourCredential -- Optional, if not public access
+);
+
+-- Create an external file format for Parquet
+CREATE EXTERNAL FILE FORMAT ParquetFormat
+WITH (
+    FORMAT_TYPE = PARQUET,
+    DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec'
+);
+
+-- Ingest (transform and load) data from raw CSV to a new Parquet external table
+-- in your data lake, representing a "silver" layer.
+CREATE EXTERNAL TABLE SilverLayer.TransformedSales
+WITH (
+    LOCATION = '/silver/sales_transformed/',
+    DATA_SOURCE = MyDataLake,
+    FILE_FORMAT = ParquetFormat,
+    REJECT_TYPE = VALUE,
+    REJECT_VALUE = 0
+) AS
+SELECT
+    CAST(t1.OrderDate AS DATE) AS SaleDate,
+    t1.ProductID,
+    SUM(CAST(t1.Quantity AS INT)) AS TotalQuantity,
+    AVG(CAST(t1.Price AS DECIMAL(10,2))) AS AvgPrice
+FROM
+    OPENROWSET(
+        BULK 'raw/sales/*.csv',
+        DATA_SOURCE = 'MyDataLake',
+        FORMAT = 'CSV',
+        PARSER_VERSION = '2.0',
+        FIRSTROW = 2 -- Skip header row if exists
+    ) WITH (
+        OrderDate VARCHAR(50),
+        ProductID VARCHAR(50),
+        Quantity VARCHAR(50),
+        Price VARCHAR(50)
+    ) AS t1
+GROUP BY
+    CAST(t1.OrderDate AS DATE), t1.ProductID;
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Scenario: Replicate a table Sales.Orders from On-Premise SQL Server (Publisher/Distributor) to an Azure SQL Database (Subscriber). We'll replicate only orders from 2023 and only the OrderID, OrderDate, and TotalAmount columns.
+
+Step 1: On-Premise SQL Server - Configure Distributor (T-SQL)
+Run this on your on-premise SQL Server instance that will act as the Distributor.
+
+SQL
+
+-- Enable the Distributor (can be the same server as the Publisher)
+USE master;
+EXEC sp_adddistributor
+    @distributor = N'$(YourOnPremSQLServerName)', -- Replace with your on-prem SQL Server name
+    @password = N'YourDistributorPassword!'; -- Choose a strong password
+
+EXEC sp_adddistributiondb
+    @database = N'distribution',
+    @data_folder = N'C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Data', -- Adjust path as needed
+    @log_folder = N'C:\Program Files\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQL\Data', -- Adjust path as needed
+    @security_mode = 1; -- Windows Authentication for connection to Distributor
+
+-- Add the Publisher to the Distributor
+EXEC sp_adddistpublisher
+    @publisher = N'$(YourOnPremSQLServerName)', -- Replace with your on-prem SQL Server name
+    @distribution_db = N'distribution',
+    @security_mode = 1, -- Windows Authentication for connection from Publisher to Distributor
+    @working_directory = N'\\YourAzureFileShare.file.core.windows.net\replication_snapshot_share'; -- Path to your Azure Files share
+    -- Ensure the Azure Files share is mapped as a network drive on the on-prem server
+    -- and the SQL Server Agent account has access.
+Step 2: On-Premise SQL Server - Create Publication (T-SQL)
+Run this on your on-premise SQL Server instance (Publisher).
+
+SQL
+
+USE YourSourceDatabase; -- Replace with your actual source database name
+
+-- Create a publication
+EXEC sp_addpublication
+    @publication = N'SalesOrderPublication', -- Name of your publication
+    @description = N'Transactional publication of Sales Orders for Azure SQL',
+    @sync_method = N'concurrent', -- Recommended for minimal blocking
+    @retention = 0, -- Keep subscriptions forever if not explicitly dropped
+    @allow_push = N'true', -- Allow push subscriptions
+    @allow_pull = N'false'; -- Not using pull subscriptions in this scenario
+
+-- Add the article (table) to the publication
+EXEC sp_addarticle
+    @publication = N'SalesOrderPublication',
+    @article = N'Orders', -- The table name to replicate
+    @source_owner = N'Sales', -- Schema name of the table
+    @source_object = N'Orders', -- Object name
+    @destination_table = N'Orders', -- Destination table name on subscriber
+    @type = N'logbased', -- Replicate based on transaction log
+    @vertical_partition = N'true', -- Enable column filtering
+    @filter_clause = N"WHERE Year = '2023' AND Quarter = 'Q1' AND Region = 'RegionA'"; -- Row filtering (optional)
+
+-- Specify columns to replicate (vertical partitioning)
+-- This is done by modifying the article directly after creation or
+-- during creation if using the New Publication Wizard in SSMS.
+-- In T-SQL, you'd typically remove columns from the article properties if you don't need them.
+-- A common way to achieve this is via SSMS Publication Wizard, or by dynamically generating
+-- sp_addarticle calls based on desired columns.
+-- For a specific set of columns (OrderID, OrderDate, TotalAmount), you'd define this
+-- within the publication's article properties, telling it to only include those.
+-- The SSMS wizard is much more user-friendly for this specific task.
+-- Example of setting individual columns (conceptually, actual T-SQL varies by version/context):
+-- EXEC sp_articlecolumn @publication = N'SalesOrderPublication', @article = N'Orders',
+--                       @column = N'OrderID', @Is_article_column = 1;
+-- EXEC sp_articlecolumn @publication = N'SalesOrderPublication', @article = N'Orders',
+--                       @column = N'OrderDate', @Is_article_column = 1;
+-- EXEC sp_articlecolumn @publication = N'SalesOrderPublication', @article = N'Orders',
+--                       @column = N'TotalAmount', @Is_article_column = 1;
+-- (and setting other columns to @Is_article_column = 0 or simply not adding them)
+
+
+-- Enable the publication
+EXEC sp_addpublication_snapshot
+    @publication = N'SalesOrderPublication',
+    @frequency_type = 1, -- Daily
+    @frequency_interval = 1,
+    @frequency_subday = 1,
+    @frequency_subday_interval = 5, -- Every 5 minutes
+    @frequency_relative_interval = 1,
+    @frequency_recurrence_factor = 0,
+    @start_time = 0,
+    @retention_period = 14;
+	
++++++++++
+	USE YourSourceDatabase; -- Replace with your actual source database name
+
+-- Add the subscriber (Azure SQL Database/Managed Instance)
+EXEC sp_addsubscription
+    @publication = N'SalesOrderPublication',
+    @subscriber = N'your_azure_sql_server.database.windows.net', -- Azure SQL Server FQDN
+    @destination_db = N'YourAzureDatabaseName', -- Target database name on Azure SQL
+    @subscription_type = N'Push',
+    @sync_type = N'automatic', -- Initial snapshot automatic
+    @article = N'all',
+    @update_mode = N'read only', -- Or 'sync tran' if bi-directional updates are configured (MI only)
+    @subscriber_type = 0; -- 0 for SQL Server (includes Azure SQL MI and DB)
+
+-- Add the push subscription agent job
+EXEC sp_addpushsubscription_agent
+    @publication = N'SalesOrderPublication',
+    @subscriber = N'your_azure_sql_server.database.windows.net',
+    @subscriber_db = N'YourAzureDatabaseName',
+    @job_login = N'YourSQLAdminLogin', -- SQL Login with db_owner on Azure SQL DB
+    @job_password = N'YourSQLAdminPassword',
+    @subscriber_security_mode = 0, -- SQL Server Authentication
+    @frequency_type = 64, -- Run continuously
+    @frequency_interval = 1,
+    @frequency_subday = 4, -- Every 5 seconds
+    @frequency_subday_interval = 5;
+++++++++++++++++++++++++++++++++++++++++++++++from onprem to ded sql pool+++++++++++++++++++++++++++++++
+T-SQL (within Dedicated SQL Pool for PolyBase/COPY):
+SQL
+
+-- Example: Creating an external data source to your Azure Data Lake Storage
+CREATE EXTERNAL DATA SOURCE MyDataLake
+WITH (
+    LOCATION = 'abfss://yourcontainer@yourstorageaccount.dfs.core.windows.net'
+);
+
+-- Example: Creating an external file format for CSV data
+CREATE EXTERNAL FILE FORMAT CsvFormat
+WITH (
+    FORMAT_TYPE = DELIMITEDTEXT,
+    FORMAT_OPTIONS (
+        FIELD_TERMINATOR = ',',
+        STRING_DELIMITER = '"',
+        FIRST_ROW_HEADER = TRUE
+    )
+);
+
+-- Example: Creating an external table referencing data in the data lake
+CREATE EXTERNAL TABLE ext_MyOnPremTable (
+    Column1 INT,
+    Column2 VARCHAR(100)
+)
+WITH (
+    LOCATION = '/raw_data/myonpremtable/', -- Path within your data lake
+    DATA_SOURCE = MyDataLake,
+    FILE_FORMAT = CsvFormat
+);
+
+-- Example: Loading data from the external table into a Dedicated SQL Pool table using CTAS (best performance)
+CREATE TABLE dbo.MyDedicatedSQLPoolTable
+WITH (
+    DISTRIBUTION = ROUND_ROBIN, -- Or HASH(Column1) for better distribution
+    CLUSTERED COLUMNSTORE INDEX
+)
+AS
+SELECT Column1, Column2
+FROM ext_MyOnPremTable;
+
+-- Or using COPY command (simpler for direct ingestion)
+COPY INTO dbo.MyDedicatedSQLPoolTable
+FROM 'https://yourstorageaccount.blob.core.windows.net/yourcontainer/raw_data/myonpremtable/*.csv'
+WITH (
+    FILE_TYPE = 'CSV',
+    CREDENTIAL = (IDENTITY='Managed Identity'), -- Or SAS token
+    FIRST_ROW = 2 -- If first row is header
+);
+
++++++++++++++++++++++++++ingest from sql db to a file++++++++++++++++++++++++++++
+Example (Conceptual T-SQL for Azure Synapse Analytics / SQL Server 2022+):
+Let's say you want to export data from an internal table dbo.MyOrders to Parquet files in an Azure Data Lake Storage Gen2 container.
+
+1. Enable PolyBase Export (if on SQL Server):
+
+SQL
+
+-- Only needed for SQL Server on-premises (SQL Server 2022+)
+EXEC sp_configure 'allow polybase export', 1;
+RECONFIGURE;
+GO
+2. Create a Master Key (if you don't have one and need credentials):
+
+SQL
+
+-- Needed if you're using database-scoped credentials (e.g., for storage account keys)
+CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'YourStrongPassword!';
+GO
+3. Create Database Scoped Credential (for connecting to Azure Storage):
+
+SQL
+
+-- Replace with your storage account name and key
+CREATE DATABASE SCOPED CREDENTIAL adls_credential
+WITH IDENTITY = 'SHARED ACCESS TOKEN',
+SECRET = 'YOUR_STORAGE_ACCOUNT_KEY'; -- Or SAS token
+GO
+4. Create External Data Source:
+
+SQL
+
+-- Replace with your storage account name and container
+CREATE EXTERNAL DATA SOURCE MyADLSDataSource
+WITH (
+    TYPE = HADOOP, -- For Azure Storage (Blob/ADLS Gen2)
+    LOCATION = 'abfss://yourcontainer@yourstorageaccount.dfs.core.windows.net/', -- ADLS Gen2
+    -- LOCATION = 'wasbs://yourcontainer@yourstorageaccount.blob.core.windows.net/', -- Blob Storage
+    CREDENTIAL = adls_credential
+);
+GO
+5. Create External File Format for Parquet:
+
+SQL
+
+CREATE EXTERNAL FILE FORMAT ParquetFormat
+WITH (
+    FORMAT_TYPE = PARQUET,
+    DATA_COMPRESSION = 'org.apache.hadoop.io.compress.SnappyCodec' -- Common compression
+);
+GO
+6. Export Data using CREATE EXTERNAL TABLE AS SELECT (CETAS):
+
+SQL
+
+-- This statement creates the external table and exports the data in one go.
+-- It will create new Parquet files in the specified location.
+CREATE EXTERNAL TABLE dbo.ExportedOrdersParquet
+WITH (
+    LOCATION = '/exports/orders/', -- Directory within your ADLS container
+    DATA_SOURCE = MyADLSDataSource,
+    FILE_FORMAT = ParquetFormat
+)
+AS
+SELECT
+    OrderID,
+    CustomerID,
+    OrderDate,
+    TotalAmount,
+    OrderStatus
+FROM
+    dbo.MyOrders
+WHERE
+    OrderDate >= '2023-01-01'; -- Example filter
+GO
+Alternatively, Export using INSERT INTO <external_table> SELECT:
+
+First, define the external table schema:
+
+SQL
+
+CREATE EXTERNAL TABLE dbo.MyOrdersExternal (
+    OrderID INT,
+    CustomerID INT,
+    OrderDate DATE,
+    TotalAmount DECIMAL(18, 2),
+    OrderStatus NVARCHAR(50)
+)
+WITH (
+    LOCATION = '/exports/moreorders/', -- Another directory for these exports
+    DATA_SOURCE = MyADLSDataSource,
+    FILE_FORMAT = ParquetFormat
+);
+GO
+
+-- Then, insert data into it
+INSERT INTO dbo.MyOrdersExternal
+SELECT
+    OrderID,
+    CustomerID,
+    OrderDate,
+    TotalAmount,
+    OrderStatus
+FROM
+    dbo.MyOrders
+WHERE
+    OrderDate < '2023-01-01';
+GO

@@ -1,0 +1,201 @@
+# Databricks Notebook: PySpark Medallion Architecture Example
+
+# This notebook demonstrates how to implement a Medallion Architecture (Bronze, Silver, Gold layers)
+# using PySpark and Delta Lake tables in a Databricks environment.
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit, current_timestamp, to_date, year, month, sum
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, DateType
+from delta.tables import DeltaTable # Required for MERGE operation if used, not strictly for this example
+
+# Initialize Spark Session (already available in Databricks notebooks)
+spark = SparkSession.builder.appName("MedallionArchitecture") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .getOrCreate()
+
+# --- Configuration ---
+# Define base path for your data lake layers.
+# In a real scenario, this would likely be an ADLS Gen2 or S3 mount point.
+# For this example, we'll use DBFS /FileStore.
+base_path = "dbfs:/FileStore/medallion_example"
+
+bronze_path = f"{base_path}/bronze/raw_customer_orders"
+silver_path = f"{base_path}/silver/conformed_customer_orders"
+gold_path = f"{base_path}/gold/monthly_item_sales"
+
+# --- Helper Function to Clean Up Previous Runs (for demonstration) ---
+def cleanup_paths():
+    print("Cleaning up previous run data...")
+    spark.sql(f"DROP TABLE IF EXISTS raw_customer_orders")
+    spark.sql(f"DROP TABLE IF EXISTS conformed_customer_orders")
+    spark.sql(f"DROP TABLE IF EXISTS monthly_item_sales")
+    dbutils.fs.rm(bronze_path, True)
+    dbutils.fs.rm(silver_path, True)
+    dbutils.fs.rm(gold_path, True)
+    print("Cleanup complete.")
+
+cleanup_paths()
+
+# --- 1. Bronze Layer: Raw Data Ingestion ---
+# Purpose: Store raw, immutable data as-is from source.
+# Characteristics: Immutability, Schema on Read (often inferred or broad string schema).
+# Technologies: Simulated here by creating a DataFrame, in reality, could be Auto Loader from external files.
+
+print("\n--- Bronze Layer: Ingesting Raw Data ---")
+
+# Simulate raw incoming customer order data
+# In a real scenario, this would be read from external systems (e.g., CSV, JSON files, Kafka)
+raw_data = [
+    ("1001", "C001", "Laptop", "1", "2023-01-15", "2023-01-15 10:30:00Z"),
+    ("1002", "C002", "Mouse", "2", "2023/01/16", "2023-01-16 11:00:00Z"),
+    ("1003", "", "Keyboard", "1", "2023-01-17", "2023-01-17 12:15:00Z"), # Missing CustomerID
+    ("1004", "C004", "Tablet", "0", "2023-01-18", "2023-01-18 13:00:00Z"), # Zero quantity
+    ("1005", "C005", "Monitor", "-1", "2023-01-19", "2023-01-19 14:00:00Z"), # Negative quantity
+    ("1006", "C001", "Laptop", "1", "2023-01-15", "2023-01-15 10:35:00Z"), # Duplicate order ID with different timestamp
+    ("1007", "C002", "Keyboard", "3", "2023-02-01", "2023-02-01 09:00:00Z") # New month data
+]
+
+# Define a simple schema for raw data (all strings to represent "as-is")
+raw_schema = StructType([
+    StructField("OrderID_raw", StringType(), True),
+    StructField("CustomerID_raw", StringType(), True),
+    StructField("Item_raw", StringType(), True),
+    StructField("Quantity_raw", StringType(), True),
+    StructField("OrderDate_raw", StringType(), True),
+    StructField("TimestampUTC_raw", StringType(), True)
+])
+
+# Create raw DataFrame
+raw_df = spark.createDataFrame(raw_data, schema=raw_schema)
+
+# Write raw data to Bronze Delta table
+# Using .option("path", ...) and .saveAsTable() creates a managed table at a specified location.
+# mode("overwrite") for initial run, mode("append") for subsequent incremental runs.
+raw_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("path", bronze_path) \
+    .saveAsTable("raw_customer_orders")
+
+print(f"Raw data written to Bronze layer at: {bronze_path}")
+print("Bronze Table Schema:")
+spark.sql("DESCRIBE raw_customer_orders").show()
+print("Bronze Table Sample Data:")
+spark.sql("SELECT * FROM raw_customer_orders").show()
+
+# --- 2. Silver Layer: Cleaning & Conforming Data ---
+# Purpose: Cleanse, standardize, and filter raw data.
+# Characteristics: Schema on Write, Data Quality Rules, Standardization.
+# Technologies: PySpark transformations on Delta tables.
+
+print("\n--- Silver Layer: Cleaning & Conforming Data ---")
+
+# Read from the Bronze table
+bronze_df = spark.read.format("delta").load(bronze_path)
+
+# Apply transformations for the Silver layer
+silver_df = bronze_df.select(
+    col("OrderID_raw").cast(IntegerType()).alias("order_id"),
+    # Replace empty CustomerID with 'UNKNOWN'
+    coalesce(col("CustomerID_raw"), lit("UNKNOWN")).alias("customer_id"),
+    col("Item_raw").alias("item_name"),
+    col("Quantity_raw").cast(IntegerType()).alias("quantity"),
+    # Standardize OrderDate to YYYY-MM-DD
+    to_date(col("OrderDate_raw"), "yyyy-MM-dd").alias("order_date"), # Assumes 'yyyy-MM-dd' or 'yyyy/MM/dd' is handled
+    col("TimestampUTC_raw").alias("raw_timestamp_utc"),
+    current_timestamp().alias("processing_timestamp") # Add processing timestamp
+)
+
+# Apply data quality rules (e.g., filter out invalid quantities)
+# In a DLT pipeline, you'd use @dlt.expect decorators for this.
+# Here, we'll use a simple filter.
+silver_df = silver_df.filter(col("quantity") > 0) \
+                     .filter(col("order_id").isNotNull()) # Ensure order_id is not null after cast
+
+# Write cleaned data to Silver Delta table
+silver_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("path", silver_path) \
+    .saveAsTable("conformed_customer_orders")
+
+print(f"Cleaned data written to Silver layer at: {silver_path}")
+print("Silver Table Schema:")
+spark.sql("DESCRIBE conformed_customer_orders").show()
+print("Silver Table Sample Data (cleaned):")
+spark.sql("SELECT * FROM conformed_customer_orders").show()
+
+
+# --- 3. Gold Layer: Curated & Business-Ready Data ---
+# Purpose: Provide aggregated, highly-refined data optimized for specific business use cases.
+# Characteristics: Optimized for Read Performance, Business-Centric, Aggregated.
+# Technologies: PySpark aggregations on Silver Delta tables, ready for BI tools.
+
+print("\n--- Gold Layer: Curating Data for Business Intelligence ---")
+
+# Read from the Silver table
+silver_conformed_df = spark.read.format("delta").load(silver_path)
+
+# Aggregate monthly sales by item
+gold_df = silver_conformed_df.groupBy(
+    year(col("order_date")).alias("sales_year"),
+    month(col("order_date")).alias("sales_month"),
+    col("item_name")
+).agg(
+    sum("quantity").alias("total_quantity_sold")
+).orderBy("sales_year", "sales_month", "item_name")
+
+# Write aggregated data to Gold Delta table
+gold_df.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("path", gold_path) \
+    .saveAsTable("monthly_item_sales")
+
+print(f"Aggregated data written to Gold layer at: {gold_path}")
+print("Gold Table Schema:")
+spark.sql("DESCRIBE monthly_item_sales").show()
+print("Gold Table Sample Data (aggregated):")
+spark.sql("SELECT * FROM monthly_item_sales").show()
+
+print("\n--- Medallion Architecture Pipeline Complete ---")
+print("You can now query your Gold layer tables directly using Databricks SQL Analytics or connect BI tools.")
+
+```
+
+**To run this example in Databricks:**
+
+1.  **Create a New Notebook:** In your Databricks workspace, create a new Python notebook.
+2.  **Attach to a Cluster:** Attach the notebook to a running cluster (any standard cluster should work).
+3.  **Copy and Paste:** Copy the entire code block above and paste it into the notebook.
+4.  **Run All Cells:** Execute all cells in the notebook.
+
+You will see output in the notebook showing the data at each layer, demonstrating the transformation process. The `cleanup_paths()` function at the beginning ensures that if you run the notebook multiple times, it starts from a clean slate.
+
+**Explanation of the Layers in the Code:**
+
+* **Bronze Layer:**
+    * **Input:** Raw `raw_data` (simulated as a Python list of tuples). In a real scenario, this would typically be `spark.read.format("cloudFiles").load("s3://raw-data/")` for streaming ingestion or `spark.read.csv()` for batch.
+    * **Transformations:** Minimal transformations. Here, we just define a schema where all original columns are treated as strings to represent "as-is" raw data. An `ingestion_timestamp` is added to track when the data entered the lake.
+    * **Output:** `raw_customer_orders` Delta table, stored in `dbfs:/FileStore/medallion_example/bronze/raw_customer_orders`.
+
+* **Silver Layer:**
+    * **Input:** Reads from the `raw_customer_orders` (Bronze) Delta table.
+    * **Transformations:**
+        * **Type Casting & Renaming:** Columns like `OrderID_raw` are cast to `IntegerType` and renamed to `order_id`.
+        * **Handling Missing Values:** `CustomerID_raw` (if empty) is replaced with "UNKNOWN" using `coalesce()`.
+        * **Date Standardization:** `OrderDate_raw` is converted to a consistent `DateType` using `to_date()`, handling different input formats.
+        * **Data Quality Filtering:** Rows with `quantity` less than or equal to 0 (OrderID 1004, 1005 from sample data) are filtered out, as are records where `order_id` is null after casting. This simulates basic data quality enforcement.
+        * **Auditability:** `raw_timestamp_utc` is retained, and `processing_timestamp` is added to track when this stage occurred.
+    * **Output:** `conformed_customer_orders` Delta table, stored in `dbfs:/FileStore/medallion_example/silver/conformed_customer_orders`.
+
+* **Gold Layer:**
+    * **Input:** Reads from the `conformed_customer_orders` (Silver) Delta table.
+    * **Transformations:**
+        * **Aggregation:** Data is grouped by `sales_year`, `sales_month`, and `item_name`.
+        * **Summarization:** The `sum()` of `quantity` is calculated for each group, creating `total_quantity_sold`.
+        * **Ordering:** Results are ordered for consistent reporting.
+    * **Output:** `monthly_item_sales` Delta table, stored in `dbfs:/FileStore/medallion_example/gold/monthly_item_sales`. This table is highly aggregated and ready for direct consumption by BI tools like Power BI or for analytical dashboards.
+
+This PySpark example provides a functional demonstration of a Medallion Architecture, showcasing how data quality and structure are progressively improved through each layer, leveraging Databricks and Delta Lake capabilities.

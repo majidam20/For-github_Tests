@@ -1,0 +1,6 @@
+Method,Specific Database,Specific Table,Specific Column
+Transactional Replication,Yes,Yes,Yes
+Azure SQL Data Sync,Yes (sync group),Yes,Yes (retiring)
+Managed Instance Link,Yes,No,No
+Always On Availability Groups,Yes (entire DB),No,No
+Azure Data Factory,Yes (by config),Yes,Yes

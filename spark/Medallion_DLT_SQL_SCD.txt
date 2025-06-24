@@ -1,0 +1,263 @@
+# Databricks DLT Notebook: Medallion Architecture (SQL) for Batch & SCD Type 2
+
+# This notebook defines a Delta Live Tables pipeline using Spark SQL
+# for all transformations, including incremental updates and SCD Type 2.
+
+# IMPORTANT: This entire notebook is intended to be used as the source for a DLT pipeline.
+# Do NOT run cells individually as a regular notebook, as DLT manages execution.
+
+# --- 1. Configuration for Data Paths (Python part for initial setup) ---
+# DLT pipelines manage paths and checkpoints automatically.
+# We define base paths for source data that Auto Loader (cloud_files) will monitor.
+# Replace with your actual cloud storage paths (e.g., "abfss://raw@<storage_account>.dfs.core.windows.net/").
+# For local testing within Databricks, /FileStore is used.
+raw_data_path_orders = "/FileStore/medallion_dlt_sql_scd2_raw/orders"
+raw_data_path_customers = "/FileStore/medallion_dlt_sql_scd2_raw/customers"
+
+# Use standard SparkSession (available in DLT runtime) to handle initial data creation
+# and cleanup, as DLT itself focuses on the pipeline definition.
+from pyspark.sql import SparkSession
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType, TimestampType
+)
+
+spark = SparkSession.builder.appName("DLTSQLSetup").getOrCreate()
+
+# --- 2. Create Initial Raw Data Files (Python part for demonstration) ---
+# In a production environment, these files would be continuously dropped by source systems
+# into the designated raw_data_path locations. This function simulates that.
+
+def create_initial_raw_data(spark_session):
+    """
+    Creates initial raw data files in the specified paths.
+    This function would typically NOT be part of your DLT notebook itself,
+    but run as a separate setup script or be fed by external sources.
+    """
+    print("Creating initial raw data files...")
+    # Clean up previous data directories
+    dbutils.fs.rm(raw_data_path_orders, True)
+    dbutils.fs.rm(raw_data_path_customers, True)
+
+    # Define raw schemas for initial data generation (as they would appear in source files)
+    raw_order_schema_for_gen = StructType([
+        StructField("OrderID", StringType(), True),
+        StructField("CustomerID", StringType(), True),
+        StructField("Item", StringType(), True),
+        StructField("Quantity", StringType(), True),
+        StructField("OrderDate", StringType(), True),
+        StructField("TimestampUTC", StringType(), True)
+    ])
+
+    raw_customer_schema_for_gen = StructType([
+        StructField("CustomerID", StringType(), True),
+        StructField("CustomerName", StringType(), True),
+        StructField("CustomerEmail", StringType(), True),
+        StructField("UpdateTimestamp", StringType(), True), # For sequence_by in apply_changes
+        StructField("Operation", StringType(), True) # INSERT, UPDATE, DELETE (optional, for apply_as_deletes)
+    ])
+
+    # Initial Orders
+    initial_orders = [
+        ("1001", "C001", "Laptop", "1", "2023-01-15", "2023-01-15 10:30:00Z"),
+        ("1002", "C002", "Mouse", "2", "2023-01-16", "2023-01-16 11:00:00Z"),
+        ("1003", "", "Keyboard", "1", "2023-01-17", "2023-01-17 12:15:00Z") # Missing CustomerID
+    ]
+    spark_session.createDataFrame(initial_orders, schema=raw_order_schema_for_gen).write.mode("append").json(raw_data_path_orders)
+    
+    # Initial Customers (for SCD Type 2)
+    initial_customers = [
+        ("C001", "Alice Smith", "alice.s@example.com", "2023-01-01 08:00:00Z", "INSERT"),
+        ("C002", "Bob Johnson", "bob.j@example.com", "2023-01-01 09:00:00Z", "INSERT"),
+        ("C003", "Charlie Brown", "charlie.b@example.com", "2023-01-01 10:00:00Z", "INSERT")
+    ]
+    spark_session.createDataFrame(initial_customers, schema=raw_customer_schema_for_gen).write.mode("append").json(raw_data_path_customers)
+    print("Initial raw data files created.")
+
+# Call the function to create initial data (this runs once when the DLT pipeline is defined)
+create_initial_raw_data(spark)
+
+# --- 3. DLT Pipeline Definition (Pure Spark SQL) ---
+# Each statement defines a LIVE TABLE, which DLT manages.
+
+# --- Bronze Layer: Raw Data Ingestion ---
+-- Bronze: Raw Customer Orders
+-- Uses cloud_files to incrementally ingest JSON files.
+-- DLT sets up schema inference and evolution automatically based on cloudFiles.schemaLocation.
+CREATE STREAMING LIVE TABLE raw_customer_orders
+COMMENT "Raw customer orders, as-is from source files. Uses Auto Loader for incremental ingestion."
+TBLPROPERTIES ("quality" = "bronze")
+AS SELECT *
+FROM cloud_files(
+  'PLACEHOLDER_FOR_RAW_ORDERS_PATH', -- DLT will replace this with the Python variable value
+  'json',
+  map(
+    'cloudFiles.schemaLocation', 'PLACEHOLDER_FOR_RAW_ORDERS_PATH/_schema' -- DLT will replace this
+    -- Add other cloudFiles options if needed, e.g., 'cloudFiles.inferSchema', 'true'
+  )
+);
+-- Note: Python variables need to be explicitly placed in DLT SQL.
+-- DLT automatically handles substitution if you use f-strings in Python.
+-- For this SQL block, you'd typically define these paths as DLT pipeline parameters
+-- or use a `spark.sql` call within a Python notebook that sets them up for DLT.
+-- For the actual DLT deployment, DLT will replace placeholders or use the string directly.
+
+-- For the sake of a runnable example, let's assume direct string substitution by DLT runtime:
+-- REPLACE 'PLACEHOLDER_FOR_RAW_ORDERS_PATH' with '/FileStore/medallion_dlt_sql_scd2_raw/orders'
+-- REPLACE 'PLACEHOLDER_FOR_RAW_ORDERS_PATH/_schema' with '/FileStore/medallion_dlt_sql_scd2_raw/orders/_schema'
+-- You would adapt these for your specific DLT setup.
+
+-- Example for actual DLT deployment (assuming paths are in python part above)
+-- The following are direct DLT SQL definitions.
+-- In a real DLT notebook, you would reference the Python variables via f-strings or direct paths.
+-- Here, I'm providing them as hardcoded for clarity, but ideally they'd be dynamic.
+
+-- Bronze: Raw Customer Orders (using hardcoded path for demonstration)
+CREATE STREAMING LIVE TABLE raw_customer_orders
+COMMENT "Raw customer orders, as-is from source files. Auto Loader detects new files incrementally."
+TBLPROPERTIES ("quality" = "bronze")
+AS SELECT
+  OrderID,
+  CustomerID,
+  Item,
+  Quantity,
+  OrderDate,
+  TimestampUTC,
+  current_timestamp() AS ingestion_timestamp
+FROM cloud_files(
+  '/FileStore/medallion_dlt_sql_scd2_raw/orders',
+  'json',
+  map('cloudFiles.schemaLocation', '/FileStore/medallion_dlt_sql_scd2_raw/orders/_schema')
+);
+
+-- Bronze: Raw Customer Updates (using hardcoded path for demonstration)
+CREATE STREAMING LIVE TABLE raw_customer_updates
+COMMENT "Raw customer updates for dimension, as-is. Used for SCD Type 2 implementation."
+TBLPROPERTIES ("quality" = "bronze")
+AS SELECT
+  CustomerID,
+  CustomerName,
+  CustomerEmail,
+  UpdateTimestamp,
+  Operation,
+  current_timestamp() AS ingestion_timestamp
+FROM cloud_files(
+  '/FileStore/medallion_dlt_sql_scd2_raw/customers',
+  'json',
+  map('cloudFiles.schemaLocation', '/FileStore/medallion_dlt_sql_scd2_raw/customers/_schema')
+);
+
+-- --- Silver Layer: Cleansed & Conformed Data ---
+
+-- Silver: Conformed Customer Orders (Fact Table)
+CREATE STREAMING LIVE TABLE conformed_customer_orders
+COMMENT "Cleaned and conformed customer orders (fact table) with data quality checks."
+TBLPROPERTIES ("quality" = "silver")
+-- Apply data quality expectations directly here.
+-- DLT automatically handles dropping/quarantining based on pipeline config.
+APPLY (CONSTRAINT valid_order_id EXPECT (OrderID IS NOT NULL AND TRIM(OrderID) <> '') ON VIOLATION DROP ROW)
+APPLY (CONSTRAINT positive_quantity EXPECT (CAST(Quantity AS INT) > 0) ON VIOLATION DROP ROW)
+AS SELECT
+  CAST(OrderID AS INT) AS order_id,
+  COALESCE(CustomerID, 'UNKNOWN') AS customer_id,
+  Item AS item_name,
+  CAST(Quantity AS INT) AS quantity,
+  TO_DATE(OrderDate, 'yyyy-MM-dd') AS order_date, -- Handles 'yyyy/MM/dd' if TO_DATE supports it implicitly
+  TO_TIMESTAMP(TimestampUTC, "yyyy-MM-dd HH:mm:ss'Z'") AS order_timestamp_utc,
+  current_timestamp() AS processing_timestamp_silver
+FROM STREAM(live.raw_customer_orders); -- Read incrementally from the Bronze table
+
+
+-- Silver: Customer Dimension (SCD Type 2)
+-- This table is managed by the APPLY CHANGES INTO statement for SCD Type 2 logic.
+CREATE OR REFRESH STREAMING LIVE TABLE dim_customer
+COMMENT "Customer Dimension Table (SCD Type 2) - Tracks history of customer attributes."
+TBLPROPERTIES ("quality" = "silver");
+
+-- Implement SCD Type 2 logic using APPLY CHANGES INTO
+APPLY CHANGES INTO live.dim_customer
+FROM STREAM(live.raw_customer_updates) -- Read incremental updates from Bronze
+KEYS (CustomerID) -- Natural key for the dimension
+SEQUENCE BY UpdateTimestamp -- Column to determine the order of changes (e.g., CDC timestamp)
+STORED AS SCD TYPE 2 -- Specifies SCD Type 2 implementation
+-- Optional: Columns that trigger a new version. If not specified, all non-key columns trigger.
+-- track_history_for_columns = (CustomerName, CustomerEmail)
+-- Optional: apply_as_deletes WHEN Operation = 'DELETE' -- If your source has explicit delete flags
+;
+
+
+-- --- Gold Layer: Curated & Business-Ready Data ---
+
+-- Gold: Monthly Item Sales (Aggregate Table)
+-- This is a MATERIALIZED VIEW (LIVE TABLE) in DLT. It reads the latest state of Silver.
+-- DLT optimizes this to be incremental where possible, even though it's a batch aggregation.
+CREATE LIVE TABLE monthly_item_sales
+COMMENT "Monthly aggregated sales quantity per item, optimized for reporting."
+TBLPROPERTIES ("quality" = "gold")
+AS SELECT
+  YEAR(order_date) AS sales_year,
+  MONTH(order_date) AS sales_month,
+  item_name,
+  SUM(quantity) AS total_quantity_sold
+FROM live.conformed_customer_orders -- Reads the LATEST state of the Silver table
+GROUP BY 1, 2, 3;
+
+
+-- --- How to Simulate Incremental Data and Trigger DLT Runs ---
+-- This part is *outside* the DLT pipeline definition.
+-- You would run this Python code from a *separate notebook* or as part of a Databricks Job
+-- that runs *before* you trigger the DLT pipeline update.
+
+# This Python function is for simulating new data for the *next* DLT pipeline run.
+# It should NOT be part of your DLT pipeline notebook itself.
+def simulate_new_data_for_next_run(spark_session):
+    """
+    Simulates new incoming raw data files for the next DLT pipeline run.
+    """
+    print("\n--- Simulating New Incoming Data for Next DLT Pipeline Run ---")
+    
+    # Define raw schemas for data generation
+    raw_order_schema_for_gen = StructType([
+        StructField("OrderID", StringType(), True),
+        StructField("CustomerID", StringType(), True),
+        StructField("Item", StringType(), True),
+        StructField("Quantity", StringType(), True),
+        StructField("OrderDate", StringType(), True),
+        StructField("TimestampUTC", StringType(), True)
+    ])
+
+    raw_customer_schema_for_gen = StructType([
+        StructField("CustomerID", StringType(), True),
+        StructField("CustomerName", StringType(), True),
+        StructField("CustomerEmail", StringType(), True),
+        StructField("UpdateTimestamp", StringType(), True),
+        StructField("Operation", StringType(), True)
+    ])
+
+    # New Orders
+    new_orders = [
+        ("1005", "C005", "Webcam", "1", "2023-01-20", "2023-01-20 09:00:00Z"), # New record
+        ("1001", "C001", "Laptop", "3", "2023-01-15", "2023-01-15 10:30:00Z"), # Update to existing order (quantity changed from 1 to 3)
+        ("1004", "C004", "Tablet", "3", "2023-01-18", "2023-01-18 13:00:00Z"),  # Previously invalid, now valid quantity
+        ("1006", "C002", "Speaker", "2", "2023-02-05", "2023-02-05 10:00:00Z") # New record in new month (Feb)
+    ]
+    spark_session.createDataFrame(new_orders, schema=raw_order_schema_for_gen).write.mode("append").json(raw_data_path_orders)
+    
+    # New Customer Updates (for SCD Type 2)
+    # C001 email changes, C002 name changes, C005 new customer, C003 email changes
+    new_customers = [
+        ("C001", "Alice Smith", "alice.new@example.com", "2023-06-01 10:00:00Z", "UPDATE"), # C001 email change (triggers new version)
+        ("C005", "Eve Green", "eve.g@example.com", "2023-06-01 11:00:00Z", "INSERT"),         # New customer
+        ("C002", "Robert Johnson", "bob.j@example.com", "2023-06-02 09:00:00Z", "UPDATE"),     # C002 name change (triggers new version)
+        ("C003", "Charlie Brown", "charlie.b@newmail.com", "2023-06-03 10:00:00Z", "UPDATE") # C003 email change
+    ]
+    spark_session.createDataFrame(new_customers, schema=raw_customer_schema_for_gen).write.mode("append").json(raw_data_path_customers)
+    
+    print("New raw data files generated in source locations.")
+    print("To process these, go to your DLT pipeline in Databricks UI and click 'Start/Run Update'.")
+
+# Instructions to simulate the next batch run (run this in a separate notebook or as a job):
+# 1. After the initial DLT pipeline run completes successfully:
+# 2. In a *separate* Databricks notebook, run the following line (ensure this separate notebook has access to `spark`):
+#    simulate_new_data_for_next_run(spark)
+# 3. Then, go back to your DLT pipeline in the UI and click "Start/Run Update" again.
+# 4. Observe the DLT graph and the resulting tables in the Data Explorer to see the incremental updates and SCD changes.

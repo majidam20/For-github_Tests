@@ -1,0 +1,11 @@
+Feature,PySpark/Spark SQL (Manual),DLT Python Library
+Development Style,Imperative (you define how to process),Declarative (you define what the tables should look like)
+Orchestration,"Manual (Databricks Jobs, Airflow, ADF)","Automatic (DLT manages DAG, dependencies, scheduling)"
+Incremental Updates,"Manual (requires careful MERGE INTO logic, readStream setup, checkpoints)","Automated (via dlt.read_stream, dlt.apply_changes, DLT runtime)"
+SCD Type 2,"Highly Complex (multi-step MERGE, complex joins, manual date management)",Simplified (dlt.apply_changes(stored_as_scd_type=2))
+Data Quality,"Custom code (assertions, filters)",Built-in dlt.expectations with automated reporting & actions
+Error Handling,"Manual try-except, custom logging, job retries","Automatic retries, error reporting, quarantine capabilities"
+Cluster Management,Manual configuration per job/task,Automatic scaling and optimization by DLT runtime
+Observability,"Requires custom monitoring, external tools","Built-in lineage, health dashboards, update history in DLT UI"
+Complexity for Devs,"Higher, especially for incremental/CDC/SCD","Lower, abstracts away operational complexity"
+Best For,"Edge cases, deep customization, existing legacy frameworks","Most new pipelines, CDC/SCD, operational efficiency, data quality initiatives"

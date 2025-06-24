@@ -1,0 +1,242 @@
+# Databricks Notebook: PySpark Medallion Architecture with Incremental Updates
+
+# This notebook demonstrates how to implement a Medallion Architecture (Bronze, Silver, Gold layers)
+# using PySpark and Delta Lake tables in a Databricks environment, focusing on incremental updates.
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, lit, current_timestamp, to_date, year, month, sum
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, DateType
+from delta.tables import DeltaTable # Crucial for MERGE INTO operations
+
+# Initialize Spark Session (already available in Databricks notebooks)
+spark = SparkSession.builder.appName("MedallionArchitectureIncremental") \
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .getOrCreate()
+
+# --- Configuration ---
+# Define base path for your data lake layers.
+# In a real scenario, this would likely be an ADLS Gen2 or S3 mount point.
+# For this example, we'll use DBFS /FileStore.
+base_path = "dbfs:/FileStore/medallion_example_incremental"
+
+bronze_path = f"{base_path}/bronze/raw_customer_orders"
+silver_path = f"{base_path}/silver/conformed_customer_orders"
+gold_path = f"{base_path}/gold/monthly_item_sales"
+
+# --- Helper Function to Clean Up Previous Runs (for demonstration) ---
+def cleanup_paths():
+    print("Cleaning up previous run data...")
+    spark.sql(f"DROP TABLE IF EXISTS raw_customer_orders")
+    spark.sql(f"DROP TABLE IF EXISTS conformed_customer_orders")
+    spark.sql(f"DROP TABLE IF EXISTS monthly_item_sales")
+    dbutils.fs.rm(bronze_path, True)
+    dbutils.fs.rm(silver_path, True)
+    dbutils.fs.rm(gold_path, True)
+    print("Cleanup complete.")
+
+# --- Define ETL Functions for Each Layer ---
+
+def run_bronze_layer(new_raw_data_df, mode="append"):
+    """
+    Ingests new raw data into the Bronze layer.
+    """
+    print(f"\n--- Bronze Layer: Ingesting New Raw Data ({mode} mode) ---")
+    
+    # Write raw data to Bronze Delta table
+    # Schema evolution enabled for raw layer robustness
+    new_raw_data_df.write \
+        .format("delta") \
+        .mode(mode) \
+        .option("path", bronze_path) \
+        .option("mergeSchema", "true") \
+        .saveAsTable("raw_customer_orders")
+    
+    print(f"New raw data ingested into Bronze layer at: {bronze_path}")
+    print("Current Bronze Table Schema:")
+    spark.sql("DESCRIBE raw_customer_orders").show()
+    print("Current Bronze Table Sample Data (latest 10 rows):")
+    spark.sql("SELECT * FROM raw_customer_orders ORDER BY TimestampUTC_raw DESC LIMIT 10").show()
+
+def run_silver_layer():
+    """
+    Cleanses and conforms data from Bronze, upserting into Silver.
+    """
+    print("\n--- Silver Layer: Cleaning & Conforming Data (Incremental Merge) ---")
+
+    # Read all data from Bronze (can optimize to read only new changes if using CDF)
+    # For simplicity, we read the full Bronze table here, and MERGE handles existing records.
+    bronze_df = spark.read.format("delta").load(bronze_path)
+
+    # Apply transformations for the Silver layer (similar to previous example)
+    silver_source_df = bronze_df.select(
+        col("OrderID_raw").cast(IntegerType()).alias("order_id"),
+        coalesce(col("CustomerID_raw"), lit("UNKNOWN")).alias("customer_id"),
+        col("Item_raw").alias("item_name"),
+        col("Quantity_raw").cast(IntegerType()).alias("quantity"),
+        to_date(col("OrderDate_raw"), "yyyy-MM-dd").alias("order_date"),
+        col("TimestampUTC_raw").alias("raw_timestamp_utc"),
+        current_timestamp().alias("processing_timestamp") # Add processing timestamp
+    )
+
+    # Apply data quality rules (e.g., filter out invalid quantities)
+    silver_source_df = silver_source_df.filter(col("quantity") > 0) \
+                                       .filter(col("order_id").isNotNull()) # Ensure order_id is not null after cast
+
+    # Check if Silver table exists. If not, create it with overwrite. Else, perform MERGE.
+    if not DeltaTable.isDeltaTable(spark, silver_path):
+        print("Silver table does not exist. Performing initial load (overwrite).")
+        silver_source_df.write \
+            .format("delta") \
+            .mode("overwrite") \
+            .option("path", silver_path) \
+            .saveAsTable("conformed_customer_orders")
+    else:
+        print("Silver table exists. Performing incremental merge.")
+        silver_delta_table = DeltaTable.forPath(spark, silver_path)
+        
+        # Merge new/updated data from source_df into the target_silver_table
+        # This handles both updates to existing orders and inserts for new orders
+        silver_delta_table.alias("target") \
+            .merge(
+                silver_source_df.alias("source"),
+                "target.order_id = source.order_id"
+            ) \
+            .whenMatchedUpdate(set = { # Update existing records
+                "customer_id": "source.customer_id",
+                "item_name": "source.item_name",
+                "quantity": "source.quantity",
+                "order_date": "source.order_date",
+                "raw_timestamp_utc": "source.raw_timestamp_utc",
+                "processing_timestamp": "source.processing_timestamp"
+            }) \
+            .whenNotMatchedInsert(values = { # Insert new records
+                "order_id": "source.order_id",
+                "customer_id": "source.customer_id",
+                "item_name": "source.item_name",
+                "quantity": "source.quantity",
+                "order_date": "source.order_date",
+                "raw_timestamp_utc": "source.raw_timestamp_utc",
+                "processing_timestamp": "source.processing_timestamp"
+            }) \
+            .execute()
+
+    print(f"Cleaned data incrementally updated in Silver layer at: {silver_path}")
+    print("Current Silver Table Schema:")
+    spark.sql("DESCRIBE conformed_customer_orders").show()
+    print("Current Silver Table Sample Data:")
+    spark.sql("SELECT * FROM conformed_customer_orders ORDER BY order_id LIMIT 10").show()
+
+def run_gold_layer():
+    """
+    Aggregates data from Silver, upserting into Gold.
+    """
+    print("\n--- Gold Layer: Curating Data for Business Intelligence (Incremental Merge) ---")
+
+    # Read all data from Silver layer
+    silver_conformed_df = spark.read.format("delta").load(silver_path)
+
+    # Aggregate monthly sales by item
+    gold_source_df = silver_conformed_df.groupBy(
+        year(col("order_date")).alias("sales_year"),
+        month(col("order_date")).alias("sales_month"),
+        col("item_name")
+    ).agg(
+        sum("quantity").alias("total_quantity_sold")
+    )
+
+    # Check if Gold table exists. If not, create it with overwrite. Else, perform MERGE.
+    if not DeltaTable.isDeltaTable(spark, gold_path):
+        print("Gold table does not exist. Performing initial load (overwrite).")
+        gold_source_df.write \
+            .format("delta") \
+            .mode("overwrite") \
+            .option("path", gold_path) \
+            .saveAsTable("monthly_item_sales")
+    else:
+        print("Gold table exists. Performing incremental merge.")
+        gold_delta_table = DeltaTable.forPath(spark, gold_path)
+        
+        # Merge new/updated aggregated data into the target Gold table
+        gold_delta_table.alias("target") \
+            .merge(
+                gold_source_df.alias("source"),
+                "target.sales_year = source.sales_year AND target.sales_month = source.sales_month AND target.item_name = source.item_name"
+            ) \
+            .whenMatchedUpdate(set = { # Update existing aggregates
+                "total_quantity_sold": "source.total_quantity_sold"
+            }) \
+            .whenNotMatchedInsert(values = { # Insert new aggregates
+                "sales_year": "source.sales_year",
+                "sales_month": "source.sales_month",
+                "item_name": "source.item_name",
+                "total_quantity_sold": "source.total_quantity_sold"
+            }) \
+            .execute()
+
+    print(f"Aggregated data incrementally updated in Gold layer at: {gold_path}")
+    print("Current Gold Table Schema:")
+    spark.sql("DESCRIBE monthly_item_sales").show()
+    print("Current Gold Table Sample Data:")
+    spark.sql("SELECT * FROM monthly_item_sales ORDER BY sales_year, sales_month, item_name").show()
+
+
+# --- Execution Flow ---
+
+# --- Initial Load Scenario ---
+print("\n--- Starting Initial Load Scenario ---")
+cleanup_paths() # Ensure a clean slate
+
+# Initial raw data for Bronze
+initial_raw_data = [
+    ("1001", "C001", "Laptop", "1", "2023-01-15", "2023-01-15 10:30:00Z"),
+    ("1002", "C002", "Mouse", "2", "2023/01/16", "2023-01-16 11:00:00Z"),
+    ("1003", "", "Keyboard", "1", "2023-01-17", "2023-01-17 12:15:00Z"), # Missing CustomerID
+    ("1004", "C004", "Tablet", "0", "2023-01-18", "2023-01-18 13:00:00Z"), # Zero quantity - will be filtered
+    ("1005", "C005", "Monitor", "-1", "2023-01-19", "2023-01-19 14:00:00Z") # Negative quantity - will be filtered
+]
+initial_raw_df = spark.createDataFrame(initial_raw_data, schema=raw_schema)
+
+# Run Bronze layer (initial overwrite)
+run_bronze_layer(initial_raw_df, mode="overwrite")
+
+# Run Silver layer (initial load)
+run_silver_layer()
+
+# Run Gold layer (initial load)
+run_gold_layer()
+
+print("\n--- Initial Load Scenario Complete ---")
+
+# --- Incremental Update Scenario ---
+print("\n--- Starting Incremental Update Scenario ---")
+
+# Simulate new incoming raw data:
+# 1. New Order (1008)
+# 2. Update to existing Order (1001) - change quantity
+# 3. Valid Order (1009) from new month (Feb)
+# 4. Previously filtered Order (1004) now has valid quantity
+incremental_raw_data = [
+    ("1008", "C006", "Webcam", "1", "2023-01-20", "2023-01-20 09:00:00Z"), # New record
+    ("1001", "C001", "Laptop", "5", "2023-01-15", "2023-01-15 10:30:00Z"), # Update to existing order (quantity change)
+    ("1009", "C007", "Speaker", "2", "2023-02-05", "2023-02-05 10:00:00Z"), # New record in new month
+    ("1004", "C004", "Tablet", "3", "2023-01-18", "2023-01-18 13:00:00Z")  # Previously invalid, now valid quantity
+]
+incremental_raw_df = spark.createDataFrame(incremental_raw_data, schema=raw_schema)
+
+# Run Bronze layer (append new raw data)
+run_bronze_layer(incremental_raw_df, mode="append")
+
+# Run Silver layer (incremental merge)
+run_silver_layer()
+
+# Run Gold layer (incremental merge)
+run_gold_layer()
+
+print("\n--- Incremental Update Scenario Complete ---")
+print("Observe the changes in the Silver and Gold layer outputs after the incremental run.")
+
+# Final check of Gold table to see combined results
+print("\n--- Final Gold Table Contents ---")
+spark.sql("SELECT * FROM monthly_item_sales ORDER BY sales_year, sales_month, item_name").show()
+

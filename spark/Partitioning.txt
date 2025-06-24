@@ -1,0 +1,21 @@
+CREATE CLUSTERED INDEX IX_YourTable_Clustered
+ON YourTable (PartitioningColumn ASC) -- PartitioningColumn must be part of the index key
+WITH (DROP_EXISTING = ON, ONLINE = ON) -- ONLINE = ON for minimal downtime (Enterprise Edition)
+ON MyPartitionScheme (PartitioningColumn);
+
+++++++++++++++
+If your table is a Heap (no Clustered Index):
+You simply create a new clustered index on the table, specifying the partition scheme.
+
+SQL
+
+CREATE CLUSTERED INDEX IX_YourTable_Clustered
+ON YourTable (PartitioningColumn ASC)
+ON MyPartitionScheme (PartitioningColumn);
+
+Considerations:
+
+Downtime: The process of rebuilding a clustered index (or creating one on a heap) can be a resource-intensive operation, potentially causing blocking or significant I/O.
+ONLINE = ON: If you have SQL Server Enterprise Edition, you can use WITH (ONLINE = ON) when creating/rebuilding the clustered index. This allows the table to remain available for read and write operations during the partitioning process, minimizing downtime.
+Offline Operation: Without ONLINE = ON (or in Standard/Express editions), the table will be locked during the index rebuild, causing downtime. For very large tables, this could be a significant window.
+Non-Clustered Indexes: All non-clustered indexes on the table will also need to be rebuilt and aligned with the new partition scheme. SQL Server will automatically do this during the clustered index rebuild if you use DROP_EXISTING = ON, but you might need to manage them explicitly otherwise.

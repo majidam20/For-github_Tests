@@ -1,0 +1,342 @@
+# --- main.tf ---
+
+# Define the Azure provider
+provider "azurerm" {
+  features {}
+}
+
+# Define the AzureAD provider for managing Azure Active Directory objects
+# Note: This provider requires specific permissions (e.g., Global Administrator or User Administrator)
+# on your Azure AD tenant for the service principal/user running Terraform.
+# If you don't have these permissions or don't need to create AAD groups/users
+# via Terraform, you can comment out this provider block and the azuread_group resource,
+# and instead use an existing Azure AD User/Group Object ID for role assignments.
+provider "azuread" {}
+
+# --- Variables Definition ---
+# variables.tf (in a real project, these would be in a separate file)
+
+variable "resource_group_name" {
+  description = "Name of the resource group."
+  type        = string
+  default     = "rg-example-storage-tf"
+}
+
+variable "location" {
+  description = "Azure region for resources."
+  type        = string
+  default     = "East US"
+}
+
+variable "storage_account_name" {
+  description = "Unique name for the storage account."
+  type        = string
+  default     = "examplestoragetf001" # Must be globally unique, lowercase, no hyphens
+}
+
+variable "container_name" {
+  description = "Name of the storage container."
+  type        = string
+  default     = "my-data-container"
+}
+
+variable "vnet_name" {
+  description = "Name of the Virtual Network."
+  type        = string
+  default     = "vnet-storage-pe"
+}
+
+variable "subnet_name" {
+  description = "Name of the Subnet for the Private Endpoint."
+  type        = string
+  default     = "snet-private-endpoint"
+}
+
+variable "ip_whitelist" {
+  description = "List of IP addresses or CIDR ranges to whitelist for storage account access."
+  type        = list(string)
+  default     = ["YOUR_PUBLIC_IP_ADDRESS/32"] # IMPORTANT: Replace with your actual public IP or remove if using only Private Endpoint
+}
+
+# --- Resource Group ---
+resource "azurerm_resource_group" "main" {
+  name     = var.resource_group_name
+  location = var.location
+  tags = {
+    Environment = "Development"
+    Project     = "Terraform-Storage-Example"
+  }
+}
+
+# --- Log Analytics Workspace (for Monitoring) ---
+resource "azurerm_log_analytics_workspace" "main" {
+  name                = "${var.resource_group_name}-loganalytics"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags = {
+    Environment = "Development"
+  }
+}
+
+# --- Azure Storage Account ---
+resource "azurerm_storage_account" "main" {
+  name                     = var.storage_account_name
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "GRS" # Geo-Redundant Storage
+  is_hns_enabled           = true  # Enable Hierarchical Namespace for Azure Data Lake Storage Gen2 capabilities
+
+  # Networking Rules (Firewall)
+  # Default action is Deny, then specific IP ranges or VNets are allowed.
+  # This makes the storage account NOT publicly accessible by default.
+  network_rules {
+    default_action             = "Deny"
+    ip_rules                   = var.ip_whitelist # Whitelist specific public IPs
+    virtual_network_subnet_ids = [azurerm_subnet.private_endpoint_subnet.id] # Allow access from specific VNet subnet
+    # bypass                     = ["AzureServices"] # Uncomment if you need Azure services like ADF to access it directly
+  }
+
+  tags = {
+    Environment = "Development"
+    Usage       = "DataLake"
+  }
+}
+
+# --- Storage Container ---
+resource "azurerm_storage_container" "main" {
+  name                  = var.container_name
+  storage_account_name  = azurerm_storage_account.main.name
+  container_access_type = "private" # No anonymous public read access
+}
+
+# --- Virtual Network and Subnet for Private Endpoint ---
+resource "azurerm_virtual_network" "main" {
+  name                = var.vnet_name
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  address_space       = ["10.0.0.0/16"]
+
+  tags = {
+    Environment = "Development"
+  }
+}
+
+resource "azurerm_subnet" "private_endpoint_subnet" {
+  name                 = var.subnet_name
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = ["10.0.1.0/24"]
+  # Private Endpoints require this delegation setting:
+  enforce_private_link_endpoint_network_policies = true
+}
+
+# --- Private DNS Zone for Storage Account ---
+resource "azurerm_private_dns_zone" "storage_blob" {
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = azurerm_resource_group.main.name
+  tags = {
+    Environment = "Development"
+  }
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "storage_blob_link" {
+  name                  = "storage-blob-vnet-link"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.storage_blob.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  registration_enabled  = false
+}
+
+resource "azurerm_private_dns_zone" "storage_dfs" {
+  name                = "privatelink.dfs.core.windows.net"
+  resource_group_name = azurerm_resource_group.main.name
+  tags = {
+    Environment = "Development"
+  }
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "storage_dfs_link" {
+  name                  = "storage-dfs-vnet-link"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.storage_dfs.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  registration_enabled  = false
+}
+
+
+# --- Private Endpoint ---
+resource "azurerm_private_endpoint" "storage_pe_blob" {
+  name                = "${var.storage_account_name}-pe-blob"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.private_endpoint_subnet.id
+
+  private_service_connection {
+    name                           = "${var.storage_account_name}-psc-blob"
+    private_connection_resource_id = azurerm_storage_account.main.id
+    is_manual_connection           = false
+    subresource_names              = ["blob"] # Connect to the blob service
+  }
+
+  private_dns_zone_group {
+    name                = "default"
+    private_dns_zone_ids = [azurerm_private_dns_zone.storage_blob.id]
+  }
+
+  tags = {
+    Environment = "Development"
+  }
+}
+
+resource "azurerm_private_endpoint" "storage_pe_dfs" {
+  name                = "${var.storage_account_name}-pe-dfs"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.private_endpoint_subnet.id
+
+  private_service_connection {
+    name                           = "${var.storage_account_name}-psc-dfs"
+    private_connection_resource_id = azurerm_storage_account.main.id
+    is_manual_connection           = false
+    subresource_names              = ["dfs"] # Connect to the DFS service (for Data Lake Gen2)
+  }
+
+  private_dns_zone_group {
+    name                = "default"
+    private_dns_zone_ids = [azurerm_private_dns_zone.storage_dfs.id]
+  }
+
+  tags = {
+    Environment = "Development"
+  }
+}
+
+# --- Monitoring (Diagnostic Settings) ---
+resource "azurerm_monitor_diagnostic_setting" "storage_account_diagnostics" {
+  name                           = "${azurerm_storage_account.main.name}-diagnostics"
+  target_resource_id             = azurerm_storage_account.main.id
+  log_analytics_workspace_id     = azurerm_log_analytics_workspace.main.id
+
+  log {
+    category = "StorageRead"
+    enabled  = true
+    retention_policy {
+      enabled = false # Use workspace retention
+    }
+  }
+
+  log {
+    category = "StorageWrite"
+    enabled  = true
+    retention_policy {
+      enabled = false
+    }
+  }
+
+  log {
+    category = "StorageDelete"
+    enabled  = true
+    retention_policy {
+      enabled = false
+    }
+  }
+
+  metric {
+    category = "Transaction"
+    enabled  = true
+    retention_policy {
+      enabled = false
+    }
+  }
+
+  metric {
+    category = "Capacity"
+    enabled  = true
+    retention_policy {
+      enabled = false
+    }
+  }
+}
+
+# --- Azure AD Group and Role Assignments (User Definitions) ---
+# This section demonstrates how to manage user access via Azure RBAC.
+# IMPORTANT: The identity running Terraform needs permissions to manage Azure AD groups
+# (e.g., 'User Administrator') and assign roles (e.g., 'Owner' or 'User Access Administrator').
+
+resource "azuread_group" "data_engineers" {
+  display_name     = "Data Engineers Team"
+  owners           = [] # Optional: Add Object IDs of Azure AD users/groups to own this AAD group
+  security_enabled = true
+}
+
+# Assign "Storage Blob Data Contributor" role to the AAD group on the specific container
+resource "azurerm_role_assignment" "data_contributor_container" {
+  scope                = azurerm_storage_container.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azuread_group.data_engineers.object_id
+}
+
+# Assign "Storage Account Contributor" role to the AAD group on the storage account
+# This allows management of the storage account itself (e.g., keys, properties),
+# but not necessarily data plane access unless data contributor role is also granted.
+resource "azurerm_role_assignment" "storage_account_management" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Account Contributor"
+  principal_id         = azuread_group.data_engineers.object_id
+}
+
+# --- Outputs ---
+# outputs.tf (in a real project, these would be in a separate file)
+
+output "storage_account_name_out" {
+  description = "The name of the created Storage Account."
+  value       = azurerm_storage_account.main.name
+}
+
+output "storage_account_primary_blob_endpoint" {
+  description = "The primary blob endpoint of the Storage Account."
+  value       = azurerm_storage_account.main.primary_blob_host
+}
+
+output "storage_account_primary_dfs_endpoint" {
+  description = "The primary DFS endpoint (Data Lake Gen2) of the Storage Account."
+  value       = azurerm_storage_account.main.primary_dfs_host
+}
+
+output "storage_account_container_url" {
+  description = "The URL of the created storage container."
+  value       = azurerm_storage_container.main.resource_manager_id
+}
+
+output "vnet_name_out" {
+  description = "The name of the created Virtual Network."
+  value       = azurerm_virtual_network.main.name
+}
+
+output "subnet_name_out" {
+  description = "The name of the subnet used for the Private Endpoint."
+  value       = azurerm_subnet.private_endpoint_subnet.name
+}
+
+output "private_endpoint_ip_address" {
+  description = "The IP address of the Private Endpoint."
+  value       = azurerm_private_endpoint.storage_pe_blob.private_service_connection[0].private_ip_address
+}
+
+output "log_analytics_workspace_id" {
+  description = "The ID of the Log Analytics Workspace for monitoring."
+  value       = azurerm_log_analytics_workspace.main.id
+}
+
+output "data_engineers_group_name" {
+  description = "The display name of the Azure AD group created for data engineers."
+  value       = azuread_group.data_engineers.display_name
+}
+
+output "data_engineers_group_object_id" {
+  description = "The Object ID of the Azure AD group created for data engineers."
+  value       = azuread_group.data_engineers.object_id
+}

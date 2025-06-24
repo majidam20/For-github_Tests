@@ -1,0 +1,11 @@
+When to Set Private IPs in Private DNS (or link to it):
+You should configure or link to Azure Private DNS zones in the following scenarios:
+
+Accessing Azure PaaS Services via Private Endpoints: Always, always, always. If you're using Private Endpoints to secure your Azure PaaS services, you need a corresponding Private DNS Zone to ensure that DNS queries from within your VNet resolve to the private IP of the Private Endpoint. Azure often automates the creation of these DNS records if you choose the "Integrate with private DNS zone" option during Private Endpoint creation.
+
+Cross-VNet Name Resolution: If you have multiple peered VNets and you want resources in one VNet to resolve hostnames of resources (especially VMs) in another VNet using their private IP addresses.
+Custom Private Domain Names: If you want to use your own custom internal domain names for your Azure resources instead of Azure's default hostnames.
+Hybrid Connectivity (On-Premises to Azure): If you have an on-premises network connected to your Azure VNet via VPN Gateway or ExpressRoute, and you want your on-premises machines to resolve private IPs of Azure resources using your private domain names. This usually involves configuring conditional forwarders on your on-premises DNS servers to forward queries for your Azure private DNS zones to Azure's DNS resolver (168.63.129.16).
+Conclusion
+Automatic Communication (Same VNet IaaS): Yes, VMs and similar IaaS resources in the same VNet (even different subnets) can communicate via private IPs using Azure's default internal DNS.
+Required for Private DNS (PaaS and Cross-VNet Name Resolution): For Azure PaaS services accessed via Private Endpoints, or for private hostname resolution across peered VNets, Azure Private DNS zones are not just recommended, but typically required for correct and seamless private connectivity and name resolution.

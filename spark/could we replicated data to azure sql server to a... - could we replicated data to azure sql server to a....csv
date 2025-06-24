@@ -1,0 +1,7 @@
+Replication Method,Azure SQL Database (PaaS),Azure SQL Managed Instance (PaaS),SQL Server on Azure VM (IaaS)
+Transactional Replication,Subscriber only (from on-prem/MI),"Publisher, Distributor, Subscriber","Publisher, Distributor, Subscriber"
+Azure SQL Data Sync,"Yes (bi-directional, but retiring)",No (not directly supported),No (not directly supported)
+Managed Instance Link,N/A,Yes (SQL Server 2022+ bi-directional),Yes (SQL Server 2022+ bi-directional)
+Always On AGs,"N/A (built-in HA/DR, not hybrid AGs)","N/A (built-in HA/DR, not hybrid AGs)","Yes (full AGs, hybrid AGs possible)"
+Log Replay Service (LRS),N/A,Yes (unidirectional to MI for migration),N/A
+Azure Data Factory,"Yes (batch, bi-directional)","Yes (batch, bi-directional)","Yes (batch, bi-directional)"

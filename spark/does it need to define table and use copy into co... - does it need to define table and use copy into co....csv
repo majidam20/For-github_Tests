@@ -1,0 +1,6 @@
+Feature,Azure Synapse Dedicated SQL Pool,Azure Synapse Serverless SQL Pool
+Purpose,Enterprise Data Warehousing (Ingestion & high-performance queries),"Ad-hoc querying, data exploration, logical data warehousing"
+COPY INTO command,"Yes, for ingestion into internal tables (requires pre-defined internal table)",No (it doesn't have internal storage to copy into)
+CREATE EXTERNAL TABLE,"Yes, to query external files (requires explicit schema definition)","Yes, to create persistent logical views (should define explicit schema)"
+OPENROWSET for Parquet,No (not supported for direct file access like Serverless),"Yes, for ad-hoc queries (auto-infers schema for Parquet/JSON)"
+Schema Inference for Parquet Files,"No, when creating EXTERNAL TABLE","Yes, when using OPENROWSET"

@@ -1,0 +1,6 @@
+Role Name,Primary Purpose,Scope (Container/Path),Required Permissions (Data Plane),Justification
+MedallionBronzeIngestor,Ingests raw data from sources.,/bronze container,Storage Blob Data Contributor,"Allows writing, reading (for append), and managing blobs within the Bronze layer. Needs to create/manage raw files."
+MedallionSilverProcessor,Cleanses/transforms data from Bronze to Silver.,"Read on /bronze, Contributor on /silver",Storage Blob Data Reader on /bronze&lt;br>Storage Blob Data Contributor on /silver,"Reads raw data, writes/manages files in Silver. Needs full control over its output layer."
+MedallionGoldProcessor,Aggregates/curates data from Silver to Gold.,"Read on /silver, Contributor on /gold",Storage Blob Data Reader on /silver&lt;br>Storage Blob Data Contributor on /gold,"Reads conformed data, writes/manages files in Gold. Needs full control over its output layer."
+MedallionDataConsumer,Reads curated data for reporting/analytics.,/gold container,Storage Blob Data Reader on /gold,"Reads only the final, validated data. No write or delete permissions."
+MedallionAdmin,Full control for maintenance/governance.,Entire Storage Account (or higher),Storage Blob Data Owner or Contributor,"Broad permissions for managing data and metadata across all layers, for administrators."

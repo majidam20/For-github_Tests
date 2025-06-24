@@ -1,0 +1,19 @@
+Here's the workflow of a Managed Identity:
+
+You enable a Managed Identity on your Azure resource (e.g., an Azure Function App).
+This creates a Service Principal for that Function App in Microsoft Entra ID.
+You then go to the target resource you want the Function App to access (e.g., an Azure Storage Account) and use Azure RBAC to assign a role (e.g., "Storage Blob Data Reader") to the Managed Identity's Service Principal on that Storage Account.
+Now, the Function App (using its Managed Identity) has the permissions defined by the "Storage Blob Data Reader" role to access the Storage Account.
+
+
+Assign Resource Roles to a Managed Identity (Non-Human / Workload Identity)
+Assign resource roles to a Managed Identity when an Azure service or application needs to authenticate and access other Azure resources programmatically, without human intervention. This is Microsoft's recommended approach for service-to-service authentication.
+
+Eliminating Credential Management: This is the biggest advantage. Managed Identities remove the need for you to store, manage, and rotate credentials (client secrets, certificates) in your code or configuration files, significantly enhancing security and reducing operational overhead.
+
+++++++++++++++++Here's the workflow of a Managed Identity:
+Example:
+
+You enable a system-assigned managed identity on an Azure Function App. You then assign the "Storage Blob Data Contributor" role to that Function App's managed identity on an Azure Storage account. The Function App's code can now seamlessly write blobs to that storage account without any hardcoded keys.
+
+You create a user-assigned managed identity called MyAppUAI. You assign this MyAppUAI the "Azure Key Vault Secret User" role on a specific Azure Key Vault. Then, you assign MyAppUAI to multiple Azure App Service instances that host your web application. All these App Service instances can now securely retrieve secrets from that Key Vault using MyAppUAI without managing credentials.

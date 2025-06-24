@@ -1,0 +1,143 @@
+import logging
+import json
+import io
+import os
+import pandas as pd
+import pyodbc # For connecting to SQL Server/Azure SQL Database
+import azure.functions as func
+from azure.storage.blob import BlobClient
+
+# Initialize the Azure Function App
+app = func.FunctionApp()
+
+# --- Configuration ---
+# You would set SqlDbConnectionString in your Function App's Application Settings
+# SQL_CONNECTION_STRING_SETTING_NAME = "SqlDbConnectionString"
+
+# --- Function Trigger ---
+@app.event_grid_trigger(arg_name="event", topic_label="topic", subscription_name="subscription")
+def CsvBlobProcessor(event: func.EventGridEvent):
+    """
+    Azure Function triggered by Azure Event Grid when a blob is created.
+    It processes CSV files from Blob Storage and inserts data into Azure SQL Database.
+    """
+    logging.info('Python Event Grid trigger function processed a request.')
+
+    try:
+        # 1. Parse Event Grid Event Data
+        event_data = event.get_json() if event.is_json() else event.get_body()
+
+        if not isinstance(event_data, dict):
+            logging.error(f"Event data is not a dictionary. Raw data: {event_data}")
+            return
+
+        blob_url = event_data.get('url')
+        if not blob_url:
+            logging.error("Blob URL not found in event data.")
+            return
+
+        # Extract blob name and container name from the URL
+        # Example URL: https://<storageaccount>.blob.core.windows.net/<container>/<blobpath>/<blobname>.csv
+        from urllib.parse import urlparse
+        parsed_url = urlparse(blob_url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        if len(path_parts) < 2:
+            logging.error(f"Invalid blob URL path: {blob_url}")
+            return
+
+        container_name = path_parts[1] # Assumes container is the second part
+        blob_name = '/'.join(path_parts[2:]) # Rest is the blob path/name
+
+        logging.info(f"Processing blob: {blob_name} from container: {container_name}")
+
+        # Ensure it's a CSV file
+        if not blob_name.lower().endswith('.csv'):
+            logging.info(f"Skipping non-CSV file: {blob_name}. Only CSV files are processed.")
+            return
+
+        # Get storage account connection string from environment variables (Function App settings)
+        # AzureWebJobsStorage is the default connection for Function App, which is usually the same
+        # storage account where the events are coming from. If not, you'd need another setting.
+        storage_connection_string = os.environ["AzureWebJobsStorage"]
+        if not storage_connection_string:
+            logging.error("AzureWebJobsStorage connection string not found in app settings.")
+            return
+
+        # 2. Download CSV Content from Blob Storage
+        blob_client = BlobClient.from_connection_string(
+            conn_str=storage_connection_string,
+            container_name=container_name,
+            blob_name=blob_name
+        )
+
+        blob_data = blob_client.download_blob().readall()
+        csv_data_io = io.StringIO(blob_data.decode('utf-8')) # Decode bytes to string and wrap in StringIO
+
+        logging.info(f"Successfully downloaded blob '{blob_name}'. Size: {len(blob_data)} bytes.")
+
+        # 3. Read CSV into Pandas DataFrame
+        # Assuming CSV has headers: Id, Name, Value
+        df = pd.read_csv(csv_data_io)
+        logging.info(f"CSV loaded into DataFrame. Rows: {len(df)}, Columns: {len(df.columns)}")
+
+        # Validate expected columns
+        required_columns = ['Id', 'Name', 'Value']
+        if not all(col in df.columns for col in required_columns):
+            logging.error(f"CSV file '{blob_name}' is missing required columns. Expected: {required_columns}, Found: {df.columns.tolist()}")
+            return
+
+        # 4. Connect to Azure SQL Database and Insert Data
+        sql_conn_str = os.environ.get("SqlDbConnectionString")
+        if not sql_conn_str:
+            logging.error("SqlDbConnectionString not found in app settings.")
+            return
+
+        conn = None # Initialize conn outside try to ensure it's defined for finally block
+        cursor = None # Initialize cursor outside try to ensure it's defined for finally block
+
+        try:
+            conn = pyodbc.connect(sql_conn_str)
+            conn.autocommit = False # Start a transaction
+            cursor = conn.cursor()
+
+            # Prepare the INSERT statement
+            # Adjust 'CsvData' and column names (Id, Name, Value) to match your SQL table.
+            insert_sql = "INSERT INTO CsvData (Id, Name, Value) VALUES (?, ?, ?)"
+
+            rows_inserted = 0
+            for index, row in df.iterrows():
+                try:
+                    # Map DataFrame columns to SQL parameters
+                    cursor.execute(insert_sql, int(row['Id']), str(row['Name']), int(row['Value']))
+                    rows_inserted += 1
+                except pyodbc.Error as sql_err:
+                    logging.error(f"SQL Error inserting row {index} from '{blob_name}': {sql_err}")
+                    # Decide if you want to continue or break on first error
+                    conn.rollback() # Rollback transaction on error
+                    raise # Re-raise to ensure the function fails and indicates an issue
+
+            conn.commit() # Commit the transaction if all inserts are successful
+            logging.info(f"Successfully inserted {rows_inserted} rows from '{blob_name}' into SQL Database.")
+
+        except pyodbc.Error as ex:
+            sqlstate = ex.args[0]
+            if conn:
+                conn.rollback()
+            logging.error(f"Failed to connect or execute SQL: {sqlstate} - {ex.args[1]}")
+            raise # Re-raise to signal an error to the Function App runtime
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+        # Optional: Move the processed CSV to an archive or delete it
+        # For simplicity, we'll just log that it's processed.
+        # If moving, you'd use blob_client.rename_blob() or copy_from_url() then delete().
+
+    except Exception as e:
+        logging.error(f"An unhandled error occurred: {e}", exc_info=True)
+        # Depending on your retry policy, you might want to raise an exception
+        # so the event is retried by Event Grid.
+        raise # Re-raise the exception for the Function App runtime to handle (e.g., retry)

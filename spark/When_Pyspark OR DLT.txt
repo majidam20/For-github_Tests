@@ -1,0 +1,62 @@
+This is a critical decision in Databricks data engineering, and it boils down to balancing control, complexity, and operational overhead. Both approaches are valid, but Delta Live Tables (DLT) is increasingly the recommended best practice for most modern Medallion Architecture implementations.
+
+Here's a breakdown of when you might choose one over the other for Medallion Architecture with Incremental Updates and SCD:
+
+When to use PySpark/Spark SQL without DLT Library (Manual Approach)
+This approach involves writing explicit PySpark (DataFrame API) or Spark SQL code for each transformation step and then using Databricks Jobs (or external orchestrators like Airflow, Azure Data Factory) to chain them together.
+
+Use Cases where this might be preferred:
+
+Maximum Granular Control & Customization:
+
+You need to implement highly bespoke, non-standard transformation logic that doesn't fit well into DLT's declarative model or its apply_changes API.
+You have very specific, low-level Spark optimizations or configurations that you need to control directly at every step.
+Your SCD logic is extremely complex and deviates significantly from standard Type 1/2/3 patterns, requiring highly custom state management or lookup logic that would be cumbersome in DLT.
+Existing Mature Spark Ecosystem:
+
+Your team already has a well-established and highly optimized Spark ETL framework and a substantial codebase written in pure PySpark/Spark SQL. The cost of refactoring and migrating to DLT might outweigh the benefits for existing pipelines.
+You have existing CI/CD pipelines and testing frameworks built around plain Spark jobs, and integrating DLT would require a significant overhaul.
+Specific Legacy Systems / External Dependencies:
+
+You have very unique integrations with legacy systems or external APIs that require complex Python or Java code that is difficult to encapsulate within DLT's dlt.table or dlt.apply_changes functions.
+You have a strong preference for using an external orchestrator (e.g., Airflow, Azure Data Factory) that directly calls Spark notebooks/JARs, and you want to maintain that single orchestration layer.
+Cost Optimization for Very Low-Frequency, Highly Predictable Workloads:
+
+In some very specific, low-frequency, highly predictable batch scenarios, fine-tuning a custom Spark job could theoretically yield marginally better cost efficiency if you have deep Spark expertise. However, DLT's auto-scaling and optimized execution often outperform manual tuning for most workloads in a managed service environment.
+Challenges of this approach (and why DLT was created):
+
+Manual Orchestration: You have to explicitly define job dependencies, retries, and error handling in Databricks Jobs (or external orchestrators).
+Manual Incremental Logic: You'll manually manage watermarks, state, and MERGE INTO statements for incremental processing, which can be complex and error-prone, especially for out-of-order data.
+Complex SCD Type 2: Implementing SCD Type 2 manually is notoriously difficult. It often involves multiple MERGE INTO statements (one to close old records, one to insert new ones), complex join conditions, and careful handling of current_date() or current_timestamp().
+Limited Observability: Less built-in lineage tracking, data quality monitoring, and operational dashboards compared to DLT.
+Higher Development & Maintenance Overhead: More boilerplate code, more debugging effort, and harder to scale development across teams.
+When to use DLT Python Library (Recommended Best Practice)
+DLT provides a declarative framework that handles many of the operational complexities of building robust ETL pipelines.
+
+Use Cases where this is strongly recommended:
+
+New Pipeline Development (Most Common):
+
+For building any new Medallion Architecture pipeline from scratch. DLT significantly reduces development time and operational burden.
+Simplified Incremental ETL/ELT:
+
+This is DLT's bread and butter. Whether your source is truly streaming (Kafka, Event Hubs) or batch (files landing regularly), DLT's cloudFiles and read_stream simplify incremental data ingestion and processing.
+Robust Change Data Capture (CDC) & SCD Implementation:
+
+DLT's apply_changes API is the standout feature for SCD Type 1 and Type 2. It automates the complex MERGE INTO logic, handles out-of-order data arrivals, and manages the __START_AT/__END_AT columns for you. This dramatically reduces the complexity and bug potential of SCDs.
+If your source data is a CDC feed, DLT is almost always the superior choice.
+Enhanced Data Quality and Reliability:
+
+When data quality is a primary concern, and you want to embed validation rules (dlt.expect) directly into your pipeline, monitor data quality metrics, and enforce quality gates.
+For pipelines that need to be highly resilient, with automatic retries and built-in error handling.
+Reduced Operational Overhead:
+
+If your team wants to focus more on business logic and less on infrastructure, cluster management, and complex orchestration.
+DLT handles the DAG creation, job scheduling, auto-scaling, and performance tuning automatically.
+Improved Observability & Governance:
+
+When you need clear data lineage, real-time monitoring dashboards, and built-in update history.
+DLT integrates natively with Unity Catalog for simplified governance across your Medallion layers.
+Standardization Across Teams:
+
+DLT encourages a consistent way of building pipelines, which can help standardize practices across different data engineering teams within an organization.

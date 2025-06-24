@@ -1,0 +1,491 @@
+Scenario: E-commerce Sales Data
+Imagine you have raw sales data (orders, customers, products) coming from various operational systems. We want to transform this raw data into clean, conformed entities and then into business-ready aggregated reports.
+
+I. Data Lake Folder Structure (Medallion Architecture)
+This defines the physical location of your data files (Delta Lake tables in this case) within your ADLS Gen2 account. Let's assume your ADLS Gen2 container is named your-datalake and you access it via a mounted path in Databricks (e.g., /mnt/datalake/).
+
+Bronze Layer (Raw Zone):
+
+Purpose: Store raw, immutable data exactly as ingested from source systems.
+
+Physical Paths:
+
+/mnt/datalake/bronze/raw_orders/
+
+/mnt/datalake/bronze/raw_customers/
+
+/mnt/datalake/bronze/raw_products/
+
+Data Format: Often original format (CSV, JSON, raw Parquet). When using Databricks, these are often registered as external Delta tables pointing to these raw paths, even if the files inside are not yet Delta. This enables SQL access.
+
+Silver Layer (Cleaned & Conformed Zone):
+
+Purpose: Store cleaned, validated, de-duplicated, and integrated data. This is the first level of transformation.
+
+Physical Paths:
+
+/mnt/datalake/silver/staging/ (for outputs of dbt's staging models)
+
+/mnt/datalake/silver/intermediate/ (for outputs of dbt's intermediate models)
+
+Data Format: Delta Lake tables (highly recommended for ACID properties, schema enforcement, time travel).
+
+Gold Layer (Curated & Business-Ready Zone):
+
+Purpose: Store highly aggregated, denormalized, and optimized data for direct consumption by BI tools and applications.
+
+Physical Paths:
+
+/mnt/datalake/gold/sales_marts/
+
+Data Format: Delta Lake tables (optimized for query performance).
+
+Conceptual Database/Schema Mapping (within Databricks Catalog):
+
+For easier SQL access, these physical paths are mapped to logical schemas (databases) in your Databricks environment:
+
+bronze_db (maps to /mnt/datalake/bronze/)
+
+silver_db (maps to /mnt/datalake/silver/)
+
+gold_db (maps to /mnt/datalake/gold/)
+
+So, a table like raw_orders in bronze_db would be backed by data in /mnt/datalake/bronze/raw_orders/.
+
+II. dbt Project Files (SQL Models and Configuration)
+This is the structure of your dbt project on your local machine or version control.
+
+1. dbt_project.yml
+
+This file configures your dbt project, including its name, profile, and default materialization settings for models.
+
+# dbt_project.yml
+name: 'retail_analytics'
+version: '1.0.0'
+config-version: 2
+
+profile: 'databricks_profile' # Refers to a profile defined in profiles.yml
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target" # directory which will store compiled SQL and run results
+clean-targets:         # directories to clean when `dbt clean` is run
+  - "target"
+  - "dbt_packages"
+
+models:
+  retail_analytics: # Project name (matches 'name' above)
+    +schema: 'silver_default' # Default schema for models if not overridden
+    # Materialization for different layers
+    staging:
+      +schema: 'silver_staging'
+      +materialized: view # Staging models are often views for freshness
+    intermediate:
+      +schema: 'silver_intermediate'
+      +materialized: table # Intermediate models often tables for reusability/performance
+    marts:
+      +schema: 'gold_marts'
+      +materialized: table # Marts models are typically tables for consumption
+
+2. profiles.yml
+
+This file contains connection details for your data platform. Important: This file is usually located in your user's home directory (e.g., ~/.dbt/profiles.yml) for security reasons, not directly within the dbt project folder.
+
+# ~/.dbt/profiles.yml
+retail_analytics: # This is the profile name referenced in dbt_project.yml
+  target: dev
+  outputs:
+    dev:
+      type: databricks
+      host: <your_databricks_workspace_url> # e.g., dbc-xxxxxxxx-xxxx.cloud.databricks.com
+      http_path: /sql/1.0/warehouses/<your_sql_warehouse_id> # SQL warehouse HTTP path
+      token: <your_databricks_personal_access_token> # Securely managed token
+      schema: dev_user_schema # Default schema for local development
+      catalog: unity_catalog_name # If using Unity Catalog, specify the catalog name
+
+3. models/sources.yml
+
+This file declares your raw data sources, linking them to tables in your bronze_db.
+
+# models/sources.yml
+version: 2
+
+sources:
+  - name: retail # Logical name for the source system
+    database: bronze_db # Maps to your bronze_db in Databricks catalog
+    tables:
+      - name: raw_orders # Refers to bronze_db.raw_orders
+        description: Raw sales order data directly from the transactional system.
+      - name: raw_customers # Refers to bronze_db.raw_customers
+        description: Raw customer data.
+      - name: raw_products # Refers to bronze_db.raw_products
+        description: Raw product information.
+
+III. dbt SQL Models and Their Input/Output Data
+Here's how each dbt layer's models read inputs and produce outputs, mapping to the Medallion Architecture.
+
+A. Staging Layer (models/staging/)
+Purpose: Initial cleaning and standardization from Bronze data.
+
+Input Data (from Bronze Layer): Reads from bronze_db.raw_orders, bronze_db.raw_customers, bronze_db.raw_products.
+
+Output Data (to Silver Layer - Staging Subzone): Creates views/tables in silver_db.silver_staging (or silver_staging schema).
+
+models/staging/stg_orders.sql
+
+-- models/staging/stg_orders.sql
+-- This model cleans and standardizes raw order data.
+-- It reads from the 'retail' source, specifically 'raw_orders' table (Bronze Layer).
+-- It outputs a view/table in the 'silver_staging' schema (Silver Layer).
+
+{{ config(
+    materialized='view'
+) }}
+
+SELECT
+    order_id AS customer_order_id,          -- Renaming for clarity
+    customer_id,
+    product_id,
+    order_date AS order_placed_at,          -- Renaming for clarity
+    total_amount_usd AS order_total_usd,    -- Renaming and clarifying currency
+    status AS order_status,
+    -- Add dbt metadata for auditing and lineage
+    _loaded_at AS source_loaded_at,         -- Assuming a loaded_at column from ingestion
+    CURRENT_TIMESTAMP() AS dbt_updated_at   -- Timestamp when this dbt model was run
+FROM
+    {{ source('retail', 'raw_orders') }}    -- Refers to bronze_db.raw_orders
+WHERE
+    status <> 'cancelled'                   -- Basic filtering for valid orders
+
+models/staging/stg_customers.sql
+
+-- models/staging/stg_customers.sql
+-- This model cleans and standardizes raw customer data.
+-- It reads from the 'retail' source, specifically 'raw_customers' table (Bronze Layer).
+-- It outputs a view/table in the 'silver_staging' schema (Silver Layer).
+
+{{ config(
+    materialized='view'
+) }}
+
+SELECT
+    customer_id,
+    first_name,
+    last_name,
+    email,
+    registration_date AS customer_registered_at,
+    address AS customer_address,
+    -- Add dbt metadata
+    _loaded_at AS source_loaded_at,
+    CURRENT_TIMESTAMP() AS dbt_updated_at
+FROM
+    {{ source('retail', 'raw_customers') }} -- Refers to bronze_db.raw_customers
+WHERE
+    is_active = TRUE                        -- Filter for active customers
+
+models/staging/stg_products.sql
+
+-- models/staging/stg_products.sql
+-- This model cleans and standardizes raw product data.
+-- It reads from the 'retail' source, specifically 'raw_products' table (Bronze Layer).
+-- It outputs a view/table in the 'silver_staging' schema (Silver Layer).
+
+{{ config(
+    materialized='view'
+) }}
+
+SELECT
+    product_id,
+    product_name,
+    category AS product_category,
+    price_usd AS product_price_usd,
+    stock_quantity,
+    -- Add dbt metadata
+    _loaded_at AS source_loaded_at,
+    CURRENT_TIMESTAMP() AS dbt_updated_at
+FROM
+    {{ source('retail', 'raw_products') }}  -- Refers to bronze_db.raw_products
+WHERE
+    is_available = TRUE                     -- Filter for available products
+
+models/staging/staging.yml (for documentation and tests)
+
+# models/staging/staging.yml
+version: 2
+
+models:
+  - name: stg_orders
+    description: Cleaned and standardized order data.
+    columns:
+      - name: customer_order_id
+        description: Unique identifier for the order.
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: Foreign key to the customer dimension.
+      - name: order_placed_at
+        description: Timestamp when the order was placed.
+    # ... more columns and tests
+
+  - name: stg_customers
+    description: Cleaned and standardized customer data.
+    columns:
+      - name: customer_id
+        description: Unique identifier for the customer.
+        tests:
+          - unique
+          - not_null
+      - name: email
+        description: Customer's email address.
+        tests:
+          - unique
+    # ... more columns and tests
+
+  - name: stg_products
+    description: Cleaned and standardized product data.
+    columns:
+      - name: product_id
+        description: Unique identifier for the product.
+        tests:
+          - unique
+          - not_null
+      - name: product_price_usd
+        description: Unit price of the product in USD.
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+
+B. Intermediate Layer (models/intermediate/)
+Purpose: Combine and transform staging models for reusability.
+
+Input Data (from Silver Layer - Staging Subzone): Reads from silver_staging.stg_orders, silver_staging.stg_customers, silver_staging.stg_products.
+
+Output Data (to Silver Layer - Intermediate Subzone): Creates tables in silver_db.silver_intermediate (or silver_intermediate schema).
+
+models/intermediate/int_customer_orders_joined.sql
+
+-- models/intermediate/int_customer_orders_joined.sql
+-- This model joins customer, order, and product staging data
+-- to create a comprehensive view of each order item,
+-- enriching it with customer and product details.
+-- It outputs a table in the 'silver_intermediate' schema (Silver Layer).
+
+{{ config(
+    materialized='table'
+) }}
+
+SELECT
+    o.customer_order_id,
+    o.customer_id,
+    c.first_name AS customer_first_name,
+    c.last_name AS customer_last_name,
+    c.email AS customer_email,
+    o.product_id,
+    p.product_name,
+    p.product_category,
+    p.product_price_usd,
+    o.order_placed_at,
+    o.order_total_usd,
+    o.order_status,
+    -- Add some simple derived metrics
+    o.order_total_usd / NULLIF(p.product_price_usd, 0) AS ordered_quantity, -- Simple quantity estimation
+    DATE_TRUNC('day', o.order_placed_at) AS order_date_day,
+    o.dbt_updated_at
+
+FROM
+    {{ ref('stg_orders') }} o              -- Refers to silver_staging.stg_orders
+JOIN
+    {{ ref('stg_customers') }} c           -- Refers to silver_staging.stg_customers
+    ON o.customer_id = c.customer_id
+JOIN
+    {{ ref('stg_products') }} p            -- Refers to silver_staging.stg_products
+    ON o.product_id = p.product_id
+
+models/intermediate/intermediate.yml
+
+# models/intermediate/intermediate.yml
+version: 2
+
+models:
+  - name: int_customer_orders_joined
+    description: Joined view of orders, customers, and products at the order item grain.
+    columns:
+      - name: customer_order_id
+        tests:
+          - unique
+          - not_null
+      - name: order_date_day
+        description: Date part of the order placement.
+        tests:
+          - not_null
+
+C. Marts Layer (models/marts/)
+Purpose: Create final, consumption-ready data marts.
+
+Input Data (from Silver Layer - Intermediate Subzone): Reads from silver_intermediate.int_customer_orders_joined.
+
+Output Data (to Gold Layer - Sales Marts Subzone): Creates tables in gold_db.gold_marts (or gold_marts schema).
+
+models/marts/fct_daily_sales.sql
+
+-- models/marts/fct_daily_sales.sql
+-- This model aggregates daily sales data for reporting.
+-- It reads from the 'int_customer_orders_joined' intermediate model (Silver Layer).
+-- It outputs a fact table in the 'gold_marts' schema (Gold Layer).
+
+{{ config(
+    materialized='incremental',              -- Enable incremental loads for performance
+    unique_key=['order_date_day', 'product_id', 'product_category'], -- Define primary key for incremental updates
+    on_schema_change='fail'                  -- Fail if schema changes unexpectedly
+) }}
+
+SELECT
+    order_date_day,
+    product_id,
+    product_category,
+    COUNT(DISTINCT customer_order_id) AS total_orders,
+    SUM(order_total_usd) AS total_revenue_usd,
+    SUM(ordered_quantity) AS total_items_sold,
+    CURRENT_TIMESTAMP() AS last_updated_at
+FROM
+    {{ ref('int_customer_orders_joined') }}  -- Refers to silver_intermediate.int_customer_orders_joined
+
+{% if is_incremental() %}
+  -- This filter will only be applied on incremental runs
+  -- to process only new or updated orders since the last run.
+  WHERE order_date_day >= (SELECT MAX(order_date_day) FROM {{ this }})
+{% endif %}
+
+GROUP BY
+    order_date_day,
+    product_id,
+    product_category
+
+ORDER BY
+    order_date_day,
+    total_revenue_usd DESC
+
+models/marts/dim_customers.sql
+
+-- models/marts/dim_customers.sql
+-- This model creates a customer dimension table for reporting.
+-- It reads from the 'stg_customers' staging model (Silver Layer).
+-- It outputs a dimension table in the 'gold_marts' schema (Gold Layer).
+
+{{ config(
+    materialized='table'
+) }}
+
+SELECT
+    customer_id,
+    first_name,
+    last_name,
+    email,
+    customer_registered_at,
+    customer_address,
+    -- Simple derived customer attribute
+    CASE
+        WHEN DATEDIFF(CURRENT_DATE(), customer_registered_at) < 30 THEN 'New'
+        WHEN DATEDIFF(CURRENT_DATE(), customer_registered_at) BETWEEN 30 AND 365 THEN 'Regular'
+        ELSE 'Loyal'
+    END AS customer_segment,
+    dbt_updated_at
+FROM
+    {{ ref('stg_customers') }} -- Refers to silver_staging.stg_customers
+
+models/marts/marts.yml
+
+# models/marts/marts.yml
+version: 2
+
+models:
+  - name: fct_daily_sales
+    description: Daily aggregated sales fact table for BI and reporting.
+    columns:
+      - name: order_date_day
+        tests:
+          - not_null
+          - unique # For the combination of columns in the unique_key for incremental
+      - name: total_revenue_usd
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_greater_than:
+              value: 0
+
+  - name: dim_customers
+    description: Customer dimension table.
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null
+      - name: email
+        tests:
+          - unique
+
+IV. End-to-End Data Flow and dbt Execution
+Raw Data Ingestion (External to dbt):
+
+Operational systems export data (e.g., CSV, JSON) daily.
+
+An ETL tool (like Azure Data Factory, or a simple Spark job) picks up these raw files and loads them into your Bronze Layer folders in ADLS Gen2.
+
+Example: raw_orders.csv lands in /mnt/datalake/bronze/raw_orders/.
+
+These are often registered as external Delta tables in bronze_db (e.g., bronze_db.raw_orders).
+
+dbt Execution (dbt build):
+
+You (or an orchestrator like ADF) trigger a dbt build command for your retail_analytics project.
+
+dbt Staging Models Run First:
+
+stg_orders.sql, stg_customers.sql, stg_products.sql are executed on your Databricks SQL Warehouse.
+
+They read data from bronze_db.raw_orders, bronze_db.raw_customers, bronze_db.raw_products (which are backed by data in /mnt/datalake/bronze/).
+
+Their outputs (silver_staging.stg_orders, silver_staging.stg_customers, silver_staging.stg_products) are materialized as views or tables in silver_db.silver_staging schema/database.
+
+If materialized as tables, the actual data files are written to:
+
+/mnt/datalake/silver/staging/stg_orders/
+
+/mnt/datalake/silver/staging/stg_customers/
+
+/mnt/datalake/silver/staging/stg_products/
+
+dbt Intermediate Models Run Next:
+
+int_customer_orders_joined.sql is executed.
+
+It reads from silver_staging.stg_orders, silver_staging.stg_customers, silver_staging.stg_products.
+
+Its output (silver_intermediate.int_customer_orders_joined) is materialized as a table in silver_db.silver_intermediate schema.
+
+The actual data files are written to:
+
+/mnt/datalake/silver/intermediate/int_customer_orders_joined/
+
+dbt Marts Models Run Last:
+
+fct_daily_sales.sql and dim_customers.sql are executed.
+
+fct_daily_sales.sql reads from silver_intermediate.int_customer_orders_joined.
+
+dim_customers.sql reads from silver_staging.stg_customers.
+
+Their outputs (gold_marts.fct_daily_sales, gold_marts.dim_customers) are materialized as tables in gold_db.gold_marts schema.
+
+The actual data files are written to:
+
+/mnt/datalake/gold/sales_marts/fct_daily_sales/
+
+/mnt/datalake/gold/sales_marts/dim_customers/
+
+This flow illustrates how dbt orchestrates transformations, progressively refining data from the raw Bronze layer, through the cleaned and integrated Silver layer, and finally to the business-ready Gold layer, all while maintaining clear separation of concerns at both the code and data storage levels.
